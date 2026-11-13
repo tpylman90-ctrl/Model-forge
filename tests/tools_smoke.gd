@@ -18,13 +18,27 @@ func _run() -> void:
         if button.custom_minimum_size.y < 55:
             _fail("tool tab touch target too small")
             return
+    if not bool(ProjectSettings.get_setting("input_devices/pointing/emulate_mouse_from_touch")):
+        _fail("Android touch-to-mouse emulation is disabled")
+        return
+    if app.edit_toggle.button_pressed:
+        _fail("editor starts with accidental pull/edit mode armed")
+        return
     app._show_tab(2)
     if app.edit_toggle.button_pressed:
         _fail("view mode still edits vertices")
         return
     app._show_tab(0)
+    if app.edit_toggle.button_pressed:
+        _fail("shape tab auto-arms vertex pulling")
+        return
+    app.edit_toggle.button_pressed = true
     if not app.edit_toggle.button_pressed:
-        _fail("shape tab did not restore editing")
+        _fail("explicit EDIT POINTS toggle does not engage")
+        return
+    app._show_tab(1)
+    if app.edit_toggle.button_pressed:
+        _fail("changing tool tabs leaves vertex drag armed")
         return
 
     var editor = app.edit
@@ -78,7 +92,7 @@ func _run() -> void:
     if editor.vertex_position().distance_to(center) > 0.0001:
         _fail("smooth tool could not undo")
         return
-    print("MODEL_FORGE_TOOLS: PASS large tool tabs + soft falloff + mirror + smooth + undo")
+    print("MODEL_FORGE_TOOLS: PASS touch emulation + explicit navigation/edit safety + soft falloff + mirror + smooth + undo")
     app.queue_free()
     quit(0)
 
