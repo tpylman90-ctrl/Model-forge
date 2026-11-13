@@ -29,6 +29,11 @@ jobs:
           cp /root/.config/godot/editor_settings-4.5.tres "$HOME/.config/godot/editor_settings-4.5.tres"
           test -f "$HOME/.local/share/godot/export_templates/4.5.2.stable/android_debug.apk"
           test -f "$HOME/.config/godot/editor_settings-4.5.tres"
+      - name: Install Godot 4.5 Android SDK platform and build tools
+        shell: bash
+        run: |
+          yes | sdkmanager --sdk_root=/usr/lib/android-sdk --licenses >/dev/null || true
+          sdkmanager --sdk_root=/usr/lib/android-sdk "platform-tools" "platforms;android-35" "build-tools;35.0.1"
       - name: Verify engine and import project
         shell: bash
         run: |
