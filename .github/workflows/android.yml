@@ -48,6 +48,9 @@ jobs:
       - name: Validate actual GUI tab click routing
         shell: bash
         run: godot --headless --path . --script res://tests/touch_gui_smoke.gd
+      - name: Validate Open GLB and Save GLB native picker callbacks
+        shell: bash
+        run: godot --headless --path . --script res://tests/picker_smoke.gd
       - name: Prepare debug signing
         shell: bash
         run: |
