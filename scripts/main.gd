@@ -33,6 +33,9 @@ var soft_radius_slider: HSlider
 var soft_radius_label: Label
 var help_dialog: AcceptDialog
 var open_dialog: FileDialog
+var open_button: Button
+var open_requests: int = 0
+var last_picker_route: String = ""
 var save_dialog: FileDialog
 var image_dialog: FileDialog
 var orbit_yaw := 0.55
@@ -72,8 +75,9 @@ func _create_ui() -> void:
     header.add_child(toolbar)
     var brand := _label(toolbar, "MODEL FORGE", 22, ACCENT)
     brand.custom_minimum_size.x = 195
-    _button(toolbar, "OPEN GLB", func(): open_dialog.popup_centered_ratio(0.88))
-    _button(toolbar, "SAVE GLB", func(): save_dialog.popup_centered_ratio(0.88))
+    open_button = _button(toolbar, "OPEN GLB", _request_open_glb)
+    open_button.custom_minimum_size.x = 192
+    _button(toolbar, "SAVE GLB", _request_save_glb)
     _button(toolbar, "UNDO", _do_undo)
     _button(toolbar, "REDO", _do_redo)
     _button(toolbar, "HELP", _show_help)
@@ -232,7 +236,8 @@ func _create_ui() -> void:
     # More: keep advanced/less frequent actions out of the main work area.
     var more_buttons := HBoxContainer.new()
     tool_panels[3].add_child(more_buttons)
-    _button(more_buttons, "LOAD PHOTO", func(): image_dialog.popup_centered_ratio(0.88))
+    _button(more_buttons, "OPEN GLB", _request_open_glb)
+    _button(more_buttons, "LOAD PHOTO", _request_reference)
     _button(more_buttons, "SHOW / HIDE PHOTO", _toggle_reference)
     _button(more_buttons, "DEMO MODEL", _create_demo)
     _button(more_buttons, "HELP", _show_help)
@@ -466,6 +471,74 @@ func _file_dialog(mode: int, filters: PackedStringArray) -> FileDialog:
     add_child(dialog)
     return dialog
 
+# Use the Android Storage Access Framework through DisplayServer rather
+# than relying on FileDialog popup/window behavior. Always report button taps.
+func _request_open_glb() -> void:
+    open_requests += 1
+    _notify("OPEN pressed — launching Android Files picker. Choose your .glb model.")
+    _show_file_picker("open")
+
+
+func _request_save_glb() -> void:
+    _notify("SAVE pressed — choose where to store the edited GLB.")
+    _show_file_picker("save")
+
+
+func _request_reference() -> void:
+    _notify("PHOTO pressed — choose a PNG, JPG or WebP reference.")
+    _show_file_picker("photo")
+
+
+func _show_file_picker(kind: String) -> void:
+    var dialog: FileDialog = open_dialog
+    var mode: int = DisplayServer.FILE_DIALOG_MODE_OPEN_FILE
+    var title := "Choose 3D model"
+    var filename := ""
+    var filters := PackedStringArray(["*.glb;GLB models;model/gltf-binary"])
+    if kind == "save":
+        title = "Export edited model"
+        filename = "model-forge-edited.glb"
+        mode = DisplayServer.FILE_DIALOG_MODE_SAVE_FILE
+        dialog = save_dialog
+    elif kind == "photo":
+        title = "Choose reference image"
+        filters = PackedStringArray(["*.png,*.jpg,*.jpeg,*.webp;Images;image/png,image/jpeg,image/webp"])
+        dialog = image_dialog
+
+    if OS.get_name() == "Android" and DisplayServer.has_feature(DisplayServer.FEATURE_NATIVE_DIALOG_FILE):
+        # Some Android document providers label GLB files application/octet-stream,
+        # not model/gltf-binary. Show all files and validate GLB magic after selection.
+        if kind == "open":
+            filters = PackedStringArray()
+        last_picker_route = "android_native"
+        var result: Error = DisplayServer.file_dialog_show(title, "", filename, false, mode, filters, _native_picker_result.bind(kind))
+        if result == OK:
+            _notify("Android Files picker requested. Select a model from Downloads or Documents.")
+            return
+        _notify("Android picker failed (%s). Trying built-in browser." % error_string(result))
+    last_picker_route = "fallback"
+    if dialog == null:
+        _notify("File browser unavailable. Please restart Model Forge.")
+        return
+    # Fallback for desktop or Android devices without native picker support.
+    dialog.popup_centered_ratio(0.88)
+    if not dialog.visible:
+        _notify("The file browser could not open on this device.")
+
+
+func _native_picker_result(ok: bool, paths: PackedStringArray, _filter_index: int, kind: String) -> void:
+    if not ok or paths.is_empty():
+        _notify("File selection canceled.")
+        return
+    var location: String = paths[0]
+    if kind == "open":
+        _load_glb(location)
+    elif kind == "save":
+        _save_glb(location)
+    elif kind == "photo":
+        _load_reference(location)
+
+
 func _load_glb(path: String) -> void:
     var file := FileAccess.open(path, FileAccess.READ)
     if file == null:
@@ -473,6 +546,9 @@ func _load_glb(path: String) -> void:
         return
     var bytes := file.get_buffer(file.get_length())
     file.close()
+    if bytes.size() < 12 or bytes.slice(0, 4).get_string_from_ascii() != "glTF":
+        _notify("Not a valid GLB file. Choose an uncompressed .glb model.")
+        return
     var document := GLTFDocument.new()
     var state := GLTFState.new()
     var problem: Error = document.append_from_buffer(bytes, "", state)
@@ -519,13 +595,11 @@ func _load_reference(path: String) -> void:
     var data := file.get_buffer(file.get_length())
     file.close()
     var picture := Image.new()
-    var extension := path.get_extension().to_lower()
-    var problem := ERR_FILE_UNRECOGNIZED
-    if extension == "png":
-        problem = picture.load_png_from_buffer(data)
-    elif extension == "jpg" or extension == "jpeg":
+    # Android SAF returns content:// URIs without reliable filename extensions.
+    var problem: Error = picture.load_png_from_buffer(data)
+    if problem != OK:
         problem = picture.load_jpg_from_buffer(data)
-    elif extension == "webp":
+    if problem != OK:
         problem = picture.load_webp_from_buffer(data)
     if problem != OK:
         _notify("Unsupported reference image.")
