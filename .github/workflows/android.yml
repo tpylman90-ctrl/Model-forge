@@ -1,0 +1,54 @@
+name: Model Forge Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.5.2
+    timeout-minutes: 35
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Verify engine and import project
+        shell: bash
+        run: |
+          godot --version
+          godot --headless --editor --path . --import --quit
+      - name: Run headless geometry smoke test
+        shell: bash
+        run: godot --headless --path . --script res://tests/smoke.gd
+      - name: Prepare debug signing
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.android" build
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -keypass android -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Model Forge,C=US"
+          fi
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
+      - name: Export APK
+        shell: bash
+        run: |
+          godot --headless --path . --export-debug Android build/ModelForge-debug.apk
+          test -s build/ModelForge-debug.apk
+          ls -lh build/ModelForge-debug.apk
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ModelForge-Android-APK
+          path: build/ModelForge-debug.apk
+          if-no-files-found: error
+          retention-days: 21
+          compression-level: 0
