@@ -42,6 +42,9 @@ jobs:
       - name: Run headless geometry smoke test
         shell: bash
         run: godot --headless --path . --script res://tests/smoke.gd
+      - name: Validate soft shaping, symmetry and the touch toolbar
+        shell: bash
+        run: godot --headless --path . --script res://tests/tools_smoke.gd
       - name: Prepare debug signing
         shell: bash
         run: |
