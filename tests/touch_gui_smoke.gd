@@ -24,6 +24,7 @@ func _run() -> void:
         return
     var button: Button = app.tab_buttons[1]
     var bounds: Rect2 = button.get_global_rect()
+    print("MODEL_FORGE_GUI: root=", root.size, " move_rect=", bounds)
     if bounds.size.x < 25.0 or bounds.size.y < 50.0:
         _fail("Tab bounds invalid: " + str(bounds))
         return
@@ -33,13 +34,15 @@ func _run() -> void:
     down.button_index = MOUSE_BUTTON_LEFT
     down.pressed = true
     down.position = bounds.get_center()
-    Input.parse_input_event(down)
+    down.global_position = down.position
+    root.push_input(down, true)
     await process_frame
     var up := InputEventMouseButton.new()
     up.button_index = MOUSE_BUTTON_LEFT
     up.pressed = false
     up.position = bounds.get_center()
-    Input.parse_input_event(up)
+    up.global_position = up.position
+    root.push_input(up, true)
     await process_frame
     if app.active_tab != 1:
         _fail("Mouse tap did not switch to MOVE; active=" + str(app.active_tab))
@@ -49,9 +52,9 @@ func _run() -> void:
     bounds = view_button.get_global_rect()
     down.position = bounds.get_center()
     up.position = bounds.get_center()
-    Input.parse_input_event(down)
+    root.push_input(down, true)
     await process_frame
-    Input.parse_input_event(up)
+    root.push_input(up, true)
     await process_frame
     if app.active_tab != 2:
         _fail("Mouse tap did not switch to VIEW; active=" + str(app.active_tab))
