@@ -1,5 +1,5 @@
 extends Control
-## Model Forge v0.1: touchscreen GLB geometry editor.
+## Model Forge v0.2.1: touchscreen GLB editor with explicit view/edit separation.
 const MeshEdit = preload("res://scripts/mesh_editor.gd")
 const DARK := Color("#101924")
 const PANEL := Color("#162231")
@@ -22,6 +22,7 @@ var status_label: Label
 var step_box: SpinBox
 var axis_picker: OptionButton
 var edit_toggle: CheckButton
+var touch_hint: Label
 var wire_toggle: CheckButton
 var reference_preview: TextureRect
 var reference_window: PanelContainer
@@ -86,9 +87,9 @@ func _create_ui() -> void:
     canvas.mouse_filter = Control.MOUSE_FILTER_STOP
     canvas.gui_input.connect(_canvas_input)
     viewport_area.add_child(canvas)
-    var hint := _label(viewport_area, "Tap a point to select • Drag to shape • Two fingers to zoom/pan", 17, Color("#d3e6f2"))
-    hint.position = Vector2(16, 12)
-    hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    touch_hint = _label(viewport_area, "VIEW MODE • Drag to rotate • Tap SHAPE for points", 17, Color("#d3e6f2"))
+    touch_hint.position = Vector2(16, 12)
+    touch_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
     reference_window = PanelContainer.new()
     _panel_style(reference_window, Color("#172536"))
@@ -152,8 +153,10 @@ func _create_ui() -> void:
     shape_options.add_theme_constant_override("separation", 12)
     tool_panels[0].add_child(shape_options)
     edit_toggle = CheckButton.new()
-    edit_toggle.text = "DRAG EDIT"
-    edit_toggle.button_pressed = true
+    edit_toggle.text = "EDIT POINTS"
+    edit_toggle.button_pressed = false
+    edit_toggle.toggled.connect(_edit_toggled)
+    edit_toggle.custom_minimum_size.x = 195
     shape_options.add_child(edit_toggle)
     var mirror := CheckButton.new()
     mirror.text = "MIRROR"
@@ -242,7 +245,7 @@ func _create_ui() -> void:
     status_label = _label(footer, "Model Forge ready", 15, MUTED)
     help_dialog = AcceptDialog.new()
     help_dialog.title = "Model Forge • Quick Guide"
-    help_dialog.dialog_text = "1. OPEN a GLB (or choose the demo in MORE).\n2. SHAPE: tap a point and drag to edit it.\n3. Enable SOFT for curved changes; Radius controls how far they reach.\n4. MIRROR matches the opposite X side.\n5. MOVE: fine-tune with X/Y/Z buttons.\n6. VIEW: front, side, top and orbit-only mode.\n7. UNDO edits; SAVE exports a new GLB.\n\nTwo fingers pan and zoom. Always keep original models."
+    help_dialog.dialog_text = "1. OPEN a GLB (or choose the demo in MORE).\n2. Drag in the viewport to ORBIT the camera.\n3. SHAPE: tap a point to select it, then turn EDIT POINTS on to drag/pull it. Switch EDIT POINTS off to orbit again.\n4. SOFT bends neighboring geometry; Radius controls its reach.\n5. MIRROR matches the opposite X side.\n6. MOVE: fine-tune with X/Y/Z buttons.\n7. VIEW: front, side, top and orbit-only mode.\n8. UNDO edits; SAVE exports a new GLB.\n\nTwo fingers pan and zoom. Always keep original models."
     add_child(help_dialog)
     _show_tab(0)
 
@@ -251,11 +254,10 @@ func _show_tab(index: int) -> void:
     for i in range(tool_panels.size()):
         tool_panels[i].visible = (i == index)
         tab_buttons[i].modulate = Color.WHITE if i == index else Color("#879cab")
-    if edit_toggle != null:
-        if index == 2:
-            edit_toggle.button_pressed = false
-        elif index < 2:
-            edit_toggle.button_pressed = true
+    # Never silently arm geometry pulling when changing tool tabs.
+    if edit_toggle != null and index != 0:
+        edit_toggle.button_pressed = false
+    _update_touch_hint()
     if status_label != null:
         var messages := [
             "SHAPE: tap a point and drag. SOFT bends nearby points.",
@@ -264,6 +266,27 @@ func _show_tab(index: int) -> void:
             "MORE: photo references, demo model, help."
         ]
         _notify(messages[index])
+
+func _edit_toggled(enabled: bool) -> void:
+    if not enabled and pointer_dragging_vertex:
+        _pointer_end()
+    _update_touch_hint()
+    if enabled:
+        _notify("EDIT ON: drag a point to reshape it. Tap EDIT POINTS to exit.")
+    else:
+        _notify("VIEW ON: drag to orbit. Tap a point to select it in SHAPE.")
+
+
+func _update_touch_hint() -> void:
+    if touch_hint == null:
+        return
+    if edit_toggle != null and edit_toggle.button_pressed:
+        touch_hint.text = "EDIT MODE • Drag a point to pull • Switch EDIT POINTS off to orbit"
+    elif active_tab == 0:
+        touch_hint.text = "VIEW MODE • Drag to rotate • Tap point to select • EDIT POINTS to reshape"
+    else:
+        touch_hint.text = "VIEW MODE • Drag to rotate • Two fingers to zoom / pan"
+
 
 func _soft_changed(enabled: bool) -> void:
     edit.soft_enabled = enabled
@@ -300,7 +323,8 @@ func _preset_view(preset: int) -> void:
 
 func _camera_mode() -> void:
     edit_toggle.button_pressed = false
-    _notify("Camera mode: drag to rotate freely. Tap SHAPE to edit.")
+    _update_touch_hint()
+    _notify("Camera mode: drag to rotate freely. Go to SHAPE → EDIT POINTS to reshape.")
 
 func _recalculate_normals() -> void:
     if edit.target == null:
@@ -642,6 +666,10 @@ func _update_camera() -> void:
     camera.look_at(orbit_center, Vector3.UP)
 
 func _canvas_input(event: InputEvent) -> void:
+    # Android generates both native touch and synthesized mouse events when
+    # mouse-from-touch is enabled. Route touch exclusively to viewport gestures;
+    # synthesized mouse remains available for Godot's regular GUI buttons.
+    var native_android: bool = OS.get_name() == "Android"
     if event is InputEventMouseButton:
         if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
             orbit_distance *= 0.88
@@ -649,12 +677,12 @@ func _canvas_input(event: InputEvent) -> void:
         elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
             orbit_distance *= 1.12
             _update_camera()
-        elif event.button_index == MOUSE_BUTTON_LEFT:
+        elif event.button_index == MOUSE_BUTTON_LEFT and not native_android:
             if event.pressed:
                 _pointer_start(event.position)
             else:
                 _pointer_end()
-    elif event is InputEventMouseMotion and pointer_down:
+    elif event is InputEventMouseMotion and pointer_down and not native_android:
         _pointer_move(event.position)
     elif event is InputEventScreenTouch:
         if event.pressed:
@@ -739,6 +767,12 @@ func _pointer_move(position: Vector2) -> void:
         _update_camera()
 
 func _pointer_end() -> void:
+    if not pointer_down:
+        return
+    if not pointer_dragging_vertex and active_tab == 0:
+        if pointer_last.distance_squared_to(pointer_origin) < 100.0:
+            if _pick_vertex(pointer_origin):
+                _update_marker()
     if pointer_dragging_vertex:
         # The final position is committed even if drag throttling skipped a frame.
         if pointer_last.distance_squared_to(pointer_origin) > 4.0:
@@ -759,6 +793,15 @@ func _pointer_end() -> void:
         _update_marker()
     pointer_down = false
     pointer_dragging_vertex = false
+
+func _notification(what: int) -> void:
+    # A lost window focus must never leave a vertex stroke or drag captured.
+    if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+        if pointer_down:
+            _pointer_end()
+        touch_positions.clear()
+        last_pinch_distance = 0.0
+        last_pinch_midpoint = Vector2.ZERO
 
 func _pick_vertex(position: Vector2) -> bool:
     if edit.target == null:
