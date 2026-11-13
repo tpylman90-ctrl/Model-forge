@@ -46,6 +46,7 @@ var stroke_moved := false
 var last_rebuild_ms := 0
 var touch_positions: Dictionary = {}
 var last_pinch_distance := 0.0
+var last_pinch_midpoint := Vector2.ZERO
 
 func _ready() -> void:
     get_viewport().gui_release_focus()
@@ -663,20 +664,28 @@ func _canvas_input(event: InputEvent) -> void:
             else:
                 _pointer_end()
                 last_pinch_distance = _touch_span()
+                last_pinch_midpoint = _touch_midpoint()
         else:
             touch_positions.erase(event.index)
             if touch_positions.is_empty():
                 _pointer_end()
             else:
                 last_pinch_distance = 0.0
+                last_pinch_midpoint = Vector2.ZERO
     elif event is InputEventScreenDrag:
         touch_positions[event.index] = event.position
         if touch_positions.size() >= 2:
             var span := _touch_span()
+            var midpoint := _touch_midpoint()
             if last_pinch_distance > 1.0 and span > 1.0:
                 orbit_distance *= last_pinch_distance / span
+                if last_pinch_midpoint != Vector2.ZERO:
+                    var shift := midpoint - last_pinch_midpoint
+                    orbit_center -= camera.global_transform.basis.x * shift.x * orbit_distance * 0.0017
+                    orbit_center += camera.global_transform.basis.y * shift.y * orbit_distance * 0.0017
                 _update_camera()
             last_pinch_distance = span
+            last_pinch_midpoint = midpoint
         elif pointer_down:
             _pointer_move(event.position)
 
@@ -685,6 +694,12 @@ func _touch_span() -> float:
     if points.size() < 2:
         return 0.0
     return points[0].distance_to(points[1])
+
+func _touch_midpoint() -> Vector2:
+    var points := touch_positions.values()
+    if points.size() < 2:
+        return Vector2.ZERO
+    return (points[0] + points[1]) * 0.5
 
 func _pointer_start(position: Vector2) -> void:
     pointer_down = true
@@ -726,7 +741,7 @@ func _pointer_move(position: Vector2) -> void:
 func _pointer_end() -> void:
     if pointer_dragging_vertex:
         # The final position is committed even if drag throttling skipped a frame.
-        if stroke_moved:
+        if pointer_last.distance_squared_to(pointer_origin) > 4.0:
             var px := pointer_last - pointer_origin
             var scale := orbit_distance * 0.0017
             var d_world := camera.global_transform.basis.x * px.x * scale
