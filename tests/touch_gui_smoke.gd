@@ -63,7 +63,32 @@ func _run() -> void:
         _fail("Tab switching caused a latched viewport drag")
         return
 
-    print("MODEL_FORGE_GUI: PASS simulated button taps MOVE/VIEW, safe idle navigation")
+    # Test the real OPEN GLB toolbar surface, not just its callback.
+    var open_button: Button = app.open_button
+    var open_bounds: Rect2 = open_button.get_global_rect()
+    if open_bounds.size.x < 80.0 or open_bounds.size.y < 50.0:
+        _fail("OPEN GLB touch target is too small: " + str(open_bounds))
+        return
+    var requests_before: int = app.open_requests
+    down.position = open_bounds.get_center()
+    down.global_position = down.position
+    up.position = down.position
+    up.global_position = up.position
+    root.push_input(down, true)
+    await process_frame
+    root.push_input(up, true)
+    await process_frame
+    if app.open_requests != requests_before + 1:
+        _fail("OPEN GLB button did not receive a GUI tap")
+        return
+    if app.last_picker_route != "fallback":
+        _fail("Headless picker should use fallback; got " + app.last_picker_route)
+        return
+    if not app.open_dialog.visible:
+        _fail("OPEN GLB tapped but fallback dialog did not appear")
+        return
+    app.open_dialog.hide()
+    print("MODEL_FORGE_GUI: PASS tabs, OPEN GLB tap and fallback dialog")
     app.queue_free()
     quit(0)
 
