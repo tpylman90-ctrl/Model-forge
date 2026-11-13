@@ -24,6 +24,13 @@ var axis_picker: OptionButton
 var edit_toggle: CheckButton
 var wire_toggle: CheckButton
 var reference_preview: TextureRect
+var reference_window: PanelContainer
+var tool_panels: Array = []
+var tab_buttons: Array = []
+var active_tab: int = 0
+var soft_radius_slider: HSlider
+var soft_radius_label: Label
+var help_dialog: AcceptDialog
 var open_dialog: FileDialog
 var save_dialog: FileDialog
 var image_dialog: FileDialog
@@ -50,135 +57,262 @@ func _ready() -> void:
     _notify("Ready. Select a body vertex and drag it, or use the axis buttons.")
 
 func _create_ui() -> void:
+    # Four large tool tabs replace the two cramped permanent sidebars.
     var whole := VBoxContainer.new()
     whole.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     whole.add_theme_constant_override("separation", 0)
     add_child(whole)
-
     var header := PanelContainer.new()
     _panel_style(header, DARK)
-    header.custom_minimum_size.y = 63
     whole.add_child(header)
     var toolbar := HBoxContainer.new()
     toolbar.add_theme_constant_override("separation", 8)
     header.add_child(toolbar)
-    _spaced(toolbar, 9)
-    var brand := Label.new()
-    brand.text = "MODEL FORGE"
-    brand.add_theme_color_override("font_color", ACCENT)
-    brand.add_theme_font_size_override("font_size", 22)
-    toolbar.add_child(brand)
-    _spaced(toolbar, 7)
-    _button(toolbar, "OPEN GLB", func(): open_dialog.popup_centered_ratio(0.85))
-    _button(toolbar, "SAVE GLB", func(): save_dialog.popup_centered_ratio(0.85))
-    _button(toolbar, "DEMO", _create_demo)
+    var brand := _label(toolbar, "MODEL FORGE", 22, ACCENT)
+    brand.custom_minimum_size.x = 195
+    _button(toolbar, "OPEN GLB", func(): open_dialog.popup_centered_ratio(0.88))
+    _button(toolbar, "SAVE GLB", func(): save_dialog.popup_centered_ratio(0.88))
     _button(toolbar, "UNDO", _do_undo)
     _button(toolbar, "REDO", _do_redo)
-    _button(toolbar, "FRAME", _frame_model)
+    _button(toolbar, "HELP", _show_help)
 
-    var workspace := HBoxContainer.new()
-    workspace.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    workspace.add_theme_constant_override("separation", 0)
-    whole.add_child(workspace)
-
-    var left := _sidebar(workspace, 234)
-    _label(left, "SCENE / GEOMETRY", 16, ACCENT)
-    _label(left, "Active mesh", 13, MUTED)
-    mesh_picker = OptionButton.new()
-    mesh_picker.custom_minimum_size.y = 42
-    mesh_picker.item_selected.connect(_choose_mesh)
-    left.add_child(mesh_picker)
-    _button(left, "PREVIOUS VERTEX", func(): _cycle_vertex(-1))
-    _button(left, "NEXT VERTEX", func(): _cycle_vertex(1))
-    vertex_label = _label(left, "Vertex: none", 13, Color.WHITE)
-    vertex_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    var rule := HSeparator.new()
-    left.add_child(rule)
-    edit_toggle = CheckButton.new()
-    edit_toggle.text = "Vertex edit"
-    edit_toggle.button_pressed = true
-    left.add_child(edit_toggle)
-    var mirror := CheckButton.new()
-    mirror.text = "Mirror across X"
-    mirror.toggled.connect(func(value: bool): edit.mirror_enabled = value)
-    left.add_child(mirror)
-    wire_toggle = CheckButton.new()
-    wire_toggle.text = "Wire overlay"
-    wire_toggle.button_pressed = false
-    wire_toggle.toggled.connect(func(value: bool): wire_preview.visible = value if wire_preview != null else false)
-    left.add_child(wire_toggle)
-    _button(left, "RECALCULATE NORMALS", func():
-        edit.recalculate_normals()
-        _notify("Normals updated. Undo available.")
-    )
-    _label(left, "Tap near a visible mesh vertex. Drag it to reshape the surface. Two fingers zoom.", 12, MUTED).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-
+    var viewport_area := Control.new()
+    viewport_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    whole.add_child(viewport_area)
     canvas = SubViewportContainer.new()
     canvas.stretch = true
-    canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    canvas.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     canvas.mouse_filter = Control.MOUSE_FILTER_STOP
     canvas.gui_input.connect(_canvas_input)
-    workspace.add_child(canvas)
+    viewport_area.add_child(canvas)
+    var hint := _label(viewport_area, "Tap a point to select • Drag to shape • Two fingers to zoom/pan", 17, Color("#d3e6f2"))
+    hint.position = Vector2(16, 12)
+    hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-    var right := _sidebar(workspace, 250)
-    _label(right, "PRECISION EDIT", 16, ACCENT)
-    _label(right, "Step distance", 13, MUTED)
+    reference_window = PanelContainer.new()
+    _panel_style(reference_window, Color("#172536"))
+    reference_window.anchor_left = 1.0
+    reference_window.anchor_right = 1.0
+    reference_window.offset_left = -435
+    reference_window.offset_right = -12
+    reference_window.offset_top = 10
+    reference_window.offset_bottom = 265
+    viewport_area.add_child(reference_window)
+    var ref_column := VBoxContainer.new()
+    reference_window.add_child(ref_column)
+    var ref_header := HBoxContainer.new()
+    ref_column.add_child(ref_header)
+    _label(ref_header, "REFERENCE IMAGE", 17, ACCENT)
+    _button(ref_header, "HIDE", _toggle_reference)
+    reference_preview = TextureRect.new()
+    reference_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    reference_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+    reference_preview.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    ref_column.add_child(reference_preview)
+    reference_window.visible = false
+
+    var dock := PanelContainer.new()
+    _panel_style(dock, PANEL)
+    whole.add_child(dock)
+    var stack := VBoxContainer.new()
+    stack.add_theme_constant_override("separation", 7)
+    dock.add_child(stack)
+    var tabs := HBoxContainer.new()
+    tabs.add_theme_constant_override("separation", 8)
+    stack.add_child(tabs)
+    for tab_name in ["SHAPE", "MOVE", "VIEW", "MORE"]:
+        var index: int = tab_buttons.size()
+        var tab := _button(tabs, tab_name, func(): _show_tab(index))
+        tab_buttons.append(tab)
+    var pages := Control.new()
+    pages.custom_minimum_size.y = 132
+    stack.add_child(pages)
+    for i in range(4):
+        var page := VBoxContainer.new()
+        page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+        page.add_theme_constant_override("separation", 8)
+        pages.add_child(page)
+        page.visible = false
+        tool_panels.append(page)
+
+    # Shape: choose a part, select a point, optionally bend its neighbors.
+    var shape_row := HBoxContainer.new()
+    tool_panels[0].add_child(shape_row)
+    mesh_picker = OptionButton.new()
+    mesh_picker.custom_minimum_size = Vector2(260, 56)
+    mesh_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    mesh_picker.item_selected.connect(_choose_mesh)
+    shape_row.add_child(mesh_picker)
+    _button(shape_row, "◀ POINT", func(): _cycle_vertex(-1))
+    _button(shape_row, "POINT ▶", func(): _cycle_vertex(1))
+    vertex_label = _label(shape_row, "No point", 15, Color.WHITE)
+    vertex_label.custom_minimum_size.x = 255
+    var shape_options := HBoxContainer.new()
+    shape_options.add_theme_constant_override("separation", 12)
+    tool_panels[0].add_child(shape_options)
+    edit_toggle = CheckButton.new()
+    edit_toggle.text = "DRAG EDIT"
+    edit_toggle.button_pressed = true
+    shape_options.add_child(edit_toggle)
+    var mirror := CheckButton.new()
+    mirror.text = "MIRROR"
+    mirror.toggled.connect(func(enabled: bool): edit.mirror_enabled = enabled)
+    shape_options.add_child(mirror)
+    var soft := CheckButton.new()
+    soft.text = "SOFT"
+    soft.toggled.connect(_soft_changed)
+    shape_options.add_child(soft)
+    soft_radius_label = _label(shape_options, "Radius 0.75", 16, MUTED)
+    soft_radius_slider = HSlider.new()
+    soft_radius_slider.custom_minimum_size.x = 180
+    soft_radius_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    soft_radius_slider.min_value = 0.15
+    soft_radius_slider.max_value = 4.0
+    soft_radius_slider.step = 0.05
+    soft_radius_slider.value = 0.75
+    soft_radius_slider.editable = false
+    soft_radius_slider.value_changed.connect(_radius_changed)
+    shape_options.add_child(soft_radius_slider)
+    _button(shape_options, "SMOOTH", _smooth_selection)
+
+    # Move: six large, predictable precision controls.
+    var move_row := HBoxContainer.new()
+    tool_panels[1].add_child(move_row)
+    for item in [
+        ["X −", Vector3.LEFT], ["X +", Vector3.RIGHT],
+        ["Y −", Vector3.DOWN], ["Y +", Vector3.UP],
+        ["Z −", Vector3(0, 0, -1)], ["Z +", Vector3(0, 0, 1)]
+    ]:
+        var direction: Vector3 = item[1]
+        _button(move_row, item[0], func(): _nudge(direction))
+    var move_settings := HBoxContainer.new()
+    tool_panels[1].add_child(move_settings)
+    _label(move_settings, "STEP SIZE", 17, MUTED)
     step_box = SpinBox.new()
+    step_box.custom_minimum_size = Vector2(180, 56)
     step_box.min_value = 0.001
     step_box.max_value = 20.0
     step_box.step = 0.01
     step_box.value = 0.10
-    right.add_child(step_box)
-    _label(right, "Axis drag lock", 13, MUTED)
+    move_settings.add_child(step_box)
+    _label(move_settings, "DRAG ALONG", 17, MUTED)
     axis_picker = OptionButton.new()
-    for item in ["VIEW PLANE", "X AXIS", "Y AXIS", "Z AXIS"]:
-        axis_picker.add_item(item)
-    right.add_child(axis_picker)
-    var row_x := HBoxContainer.new()
-    right.add_child(row_x)
-    _button(row_x, "X −", func(): _nudge(Vector3.LEFT))
-    _button(row_x, "X +", func(): _nudge(Vector3.RIGHT))
-    var row_y := HBoxContainer.new()
-    right.add_child(row_y)
-    _button(row_y, "Y −", func(): _nudge(Vector3.DOWN))
-    _button(row_y, "Y +", func(): _nudge(Vector3.UP))
-    var row_z := HBoxContainer.new()
-    right.add_child(row_z)
-    _button(row_z, "Z −", func(): _nudge(Vector3(0, 0, -1)))
-    _button(row_z, "Z +", func(): _nudge(Vector3(0, 0, 1)))
-    _label(right, "IMAGE REFERENCE", 16, ACCENT)
-    _button(right, "LOAD IMAGE", func(): image_dialog.popup_centered_ratio(0.85))
-    reference_preview = TextureRect.new()
-    reference_preview.custom_minimum_size = Vector2(220, 145)
-    reference_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-    reference_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-    right.add_child(reference_preview)
-    _label(right, "Original files remain unchanged until you explicitly export.", 12, MUTED).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    axis_picker.custom_minimum_size = Vector2(225, 56)
+    axis_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    for axis in ["SCREEN", "X AXIS", "Y AXIS", "Z AXIS"]:
+        axis_picker.add_item(axis)
+    move_settings.add_child(axis_picker)
+    _label(move_settings, "Tap SHAPE to select another point.", 16, MUTED)
+
+    # View: preset cameras, wireframe inspection and orbit-only mode.
+    var views := HBoxContainer.new()
+    tool_panels[2].add_child(views)
+    _button(views, "FIT", _frame_model)
+    _button(views, "FRONT", func(): _preset_view(0))
+    _button(views, "SIDE", func(): _preset_view(1))
+    _button(views, "TOP", func(): _preset_view(2))
+    _button(views, "3/4", func(): _preset_view(3))
+    var view_row := HBoxContainer.new()
+    tool_panels[2].add_child(view_row)
+    wire_toggle = CheckButton.new()
+    wire_toggle.text = "WIREFRAME"
+    wire_toggle.toggled.connect(func(enabled: bool):
+        if wire_preview != null:
+            wire_preview.visible = enabled
+    )
+    view_row.add_child(wire_toggle)
+    _button(view_row, "CAMERA ONLY", _camera_mode)
+    _button(view_row, "REBUILD NORMALS", _recalculate_normals)
+    _label(view_row, "Drag to orbit. Two fingers pan or zoom.", 16, MUTED)
+
+    # More: keep advanced/less frequent actions out of the main work area.
+    var more_buttons := HBoxContainer.new()
+    tool_panels[3].add_child(more_buttons)
+    _button(more_buttons, "LOAD PHOTO", func(): image_dialog.popup_centered_ratio(0.88))
+    _button(more_buttons, "SHOW / HIDE PHOTO", _toggle_reference)
+    _button(more_buttons, "DEMO MODEL", _create_demo)
+    _button(more_buttons, "HELP", _show_help)
+    var tip := _label(tool_panels[3], "Export to a new GLB filename. Keep your original model as a backup.", 17, MUTED)
+    tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
     var footer := PanelContainer.new()
-    footer.custom_minimum_size.y = 40
     _panel_style(footer, DARK)
     whole.add_child(footer)
-    status_label = Label.new()
-    status_label.text = "Model Forge — initialized"
-    status_label.add_theme_color_override("font_color", MUTED)
-    footer.add_child(status_label)
+    status_label = _label(footer, "Model Forge ready", 15, MUTED)
+    help_dialog = AcceptDialog.new()
+    help_dialog.title = "Model Forge • Quick Guide"
+    help_dialog.dialog_text = "1. OPEN a GLB (or choose the demo in MORE).\n2. SHAPE: tap a point and drag to edit it.\n3. Enable SOFT for curved changes; Radius controls how far they reach.\n4. MIRROR matches the opposite X side.\n5. MOVE: fine-tune with X/Y/Z buttons.\n6. VIEW: front, side, top and orbit-only mode.\n7. UNDO edits; SAVE exports a new GLB.\n\nTwo fingers pan and zoom. Always keep original models."
+    add_child(help_dialog)
+    _show_tab(0)
 
-func _sidebar(parent: Node, width_px: float) -> VBoxContainer:
-    var panel := PanelContainer.new()
-    panel.custom_minimum_size.x = width_px
-    panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    _panel_style(panel, PANEL)
-    parent.add_child(panel)
-    var scrolling := ScrollContainer.new()
-    scrolling.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    panel.add_child(scrolling)
-    var stack := VBoxContainer.new()
-    stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    stack.add_theme_constant_override("separation", 8)
-    scrolling.add_child(stack)
-    return stack
+func _show_tab(index: int) -> void:
+    active_tab = index
+    for i in range(tool_panels.size()):
+        tool_panels[i].visible = (i == index)
+        tab_buttons[i].modulate = Color.WHITE if i == index else Color("#879cab")
+    if edit_toggle != null:
+        if index == 2:
+            edit_toggle.button_pressed = false
+        elif index < 2:
+            edit_toggle.button_pressed = true
+    if status_label != null:
+        var messages := [
+            "SHAPE: tap a point and drag. SOFT bends nearby points.",
+            "MOVE: adjust the selected point with precision XYZ steps.",
+            "VIEW: drag to orbit, pinch to zoom, or choose a camera angle.",
+            "MORE: photo references, demo model, help."
+        ]
+        _notify(messages[index])
+
+func _soft_changed(enabled: bool) -> void:
+    edit.soft_enabled = enabled
+    soft_radius_slider.editable = enabled
+    _notify("SOFT on: nearby geometry moves with the point." if enabled else "SOFT off: only the selected point moves.")
+
+func _radius_changed(value: float) -> void:
+    edit.soft_radius = value
+    soft_radius_label.text = "Radius %.2f" % value
+
+func _smooth_selection() -> void:
+    if not edit.has_selection():
+        _notify("Select a point first.")
+        return
+    edit.relax_selected(0.28)
+    _notify("Smoothed selection — tap UNDO if needed.")
+
+func _preset_view(preset: int) -> void:
+    match preset:
+        0:
+            orbit_yaw = 0.0
+            orbit_pitch = 0.0
+        1:
+            orbit_yaw = PI / 2.0
+            orbit_pitch = 0.0
+        2:
+            orbit_yaw = 0.0
+            orbit_pitch = 1.40
+        3:
+            orbit_yaw = 0.55
+            orbit_pitch = 0.35
+    _update_camera()
+    _update_marker()
+
+func _camera_mode() -> void:
+    edit_toggle.button_pressed = false
+    _notify("Camera mode: drag to rotate freely. Tap SHAPE to edit.")
+
+func _recalculate_normals() -> void:
+    if edit.target == null:
+        _notify("Open or select a mesh first.")
+        return
+    edit.recalculate_normals()
+    _notify("Normals rebuilt; this shading action is not undoable.")
+
+func _toggle_reference() -> void:
+    reference_window.visible = not reference_window.visible
+
+func _show_help() -> void:
+    help_dialog.popup_centered(Vector2i(850, 490))
 
 func _panel_style(panel: PanelContainer, color: Color) -> void:
     var style := StyleBoxFlat.new()
@@ -192,7 +326,8 @@ func _panel_style(panel: PanelContainer, color: Color) -> void:
 func _button(parent: Node, caption: String, action: Callable) -> Button:
     var button := Button.new()
     button.text = caption
-    button.custom_minimum_size.y = 41
+    button.custom_minimum_size.y = 58
+    button.add_theme_font_size_override("font_size", 19)
     button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     button.pressed.connect(action)
     parent.add_child(button)
@@ -371,7 +506,8 @@ func _load_reference(path: String) -> void:
         _notify("Unsupported reference image.")
         return
     reference_preview.texture = ImageTexture.create_from_image(picture)
-    _notify("Reference image loaded.")
+    reference_window.visible = true
+    _notify("Reference image loaded. HIDE closes the photo.")
 
 func _clear_asset() -> void:
     edit.set_target(null)
@@ -469,8 +605,7 @@ func _update_marker() -> void:
     var point := edit.vertex_position()
     marker.global_position = edit.target.to_global(point)
     marker.scale = Vector3.ONE * maxf(0.035, orbit_distance * 0.011)
-    vertex_label.text = "Surface %d / vertex %d\nLocal position:\nX %.3f   Y %.3f   Z %.3f" % [
-        edit.selected_surface, edit.selected_vertex, point.x, point.y, point.z]
+    vertex_label.text = "Point %d\n%.2f, %.2f, %.2f" % [edit.selected_vertex, point.x, point.y, point.z]
 
 func _frame_model() -> void:
     if mesh_nodes.is_empty():
