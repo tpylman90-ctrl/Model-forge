@@ -8,10 +8,14 @@ var surfaces: Array = []
 var selected_surface: int = -1
 var selected_vertex: int = -1
 var mirror_enabled: bool = false
+var soft_enabled: bool = false
+var soft_radius: float = 0.75
+
 
 var _weld: Array = []
 var _mirror_weld: Array = []
 var _stroke_before: Array = []
+var _stroke_influences: Array = []
 var _stroke_active: bool = false
 var _stroke_changed: bool = false
 var _undo_stack: Array = []
@@ -96,9 +100,42 @@ func begin_stroke() -> bool:
     if not has_selection() or _stroke_active:
         return false
     _stroke_before = _snapshot()
+    _stroke_influences = _build_influences(_stroke_before)
     _stroke_active = true
     _stroke_changed = false
     return true
+
+func _falloff(distance: float) -> float:
+    if distance > soft_radius:
+        return 0.0
+    var t: float = clampf(1.0 - distance / maxf(soft_radius, 0.0001), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+func _build_influences(snapshot: Array) -> Array:
+    var result: Array = []
+    if not has_selection():
+        return result
+    var center: Vector3 = snapshot[selected_surface][selected_vertex]
+    var reflected := Vector3(-center.x, center.y, center.z)
+    for s in range(snapshot.size()):
+        var vertices: PackedVector3Array = snapshot[s]
+        for i in range(vertices.size()):
+            var pos: Vector3 = vertices[i]
+            var mirrored := false
+            var distance := pos.distance_to(center)
+            # Only use the reflected brush on the opposite side of the X plane.
+            if mirror_enabled and absf(center.x) > 0.0002 and pos.x * center.x < -0.000001:
+                distance = pos.distance_to(reflected)
+                mirrored = true
+            var weight := 0.0
+            if soft_enabled:
+                weight = _falloff(distance)
+            elif distance * distance <= WELD_EPSILON_SQUARED:
+                weight = 1.0
+            if weight <= 0.0:
+                continue
+            result.append({"surface": s, "index": i, "weight": weight, "mirrored": mirrored})
+    return result
 
 func apply_stroke_delta(delta: Vector3) -> void:
     if not _stroke_active:
@@ -107,18 +144,76 @@ func apply_stroke_delta(delta: Vector3) -> void:
         var arrays: Array = surfaces[s]["arrays"]
         arrays[Mesh.ARRAY_VERTEX] = _stroke_before[s].duplicate()
         surfaces[s]["arrays"] = arrays
-    for address in _weld:
-        var verts: PackedVector3Array = surfaces[address.x]["arrays"][Mesh.ARRAY_VERTEX]
-        verts[address.y] = _stroke_before[address.x][address.y] + delta
-        surfaces[address.x]["arrays"][Mesh.ARRAY_VERTEX] = verts
-    if mirror_enabled:
-        var reflected_delta := Vector3(-delta.x, delta.y, delta.z)
-        for address in _mirror_weld:
-            var verts: PackedVector3Array = surfaces[address.x]["arrays"][Mesh.ARRAY_VERTEX]
-            verts[address.y] = _stroke_before[address.x][address.y] + reflected_delta
-            surfaces[address.x]["arrays"][Mesh.ARRAY_VERTEX] = verts
+    for influence in _stroke_influences:
+        var s: int = influence["surface"]
+        var index: int = influence["index"]
+        var original: Vector3 = _stroke_before[s][index]
+        var displacement: Vector3 = delta * float(influence["weight"])
+        if bool(influence["mirrored"]):
+            displacement.x = -displacement.x
+        if mirror_enabled and absf(original.x) <= 0.0002:
+            displacement.x = 0.0
+        var vertices: PackedVector3Array = surfaces[s]["arrays"][Mesh.ARRAY_VERTEX]
+        vertices[index] = original + displacement
+        surfaces[s]["arrays"][Mesh.ARRAY_VERTEX] = vertices
     _stroke_changed = delta.length_squared() > 0.0000000001
     _rebuild()
+
+func relax_selected(strength: float = 0.28) -> void:
+    # Lightweight Laplacian relaxation of the influenced region.
+    if not has_selection() or _stroke_active:
+        return
+    var before: Array = _snapshot()
+    var influences: Array = _build_influences(before)
+    var changes := 0
+    for s in range(surfaces.size()):
+        var arrays: Array = surfaces[s]["arrays"]
+        var verts: PackedVector3Array = before[s]
+        var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+        var neighbors: Array = []
+        for i in range(verts.size()):
+            neighbors.append([])
+        var n: int = indices.size() if not indices.is_empty() else verts.size()
+        for k in range(0, n - 2, 3):
+            var a: int = indices[k] if not indices.is_empty() else k
+            var b: int = indices[k + 1] if not indices.is_empty() else k + 1
+            var c: int = indices[k + 2] if not indices.is_empty() else k + 2
+            if a < 0 or b < 0 or c < 0 or a >= verts.size() or b >= verts.size() or c >= verts.size():
+                continue
+            neighbors[a].append(b)
+            neighbors[a].append(c)
+            neighbors[b].append(a)
+            neighbors[b].append(c)
+            neighbors[c].append(a)
+            neighbors[c].append(b)
+        var changed_vertices: PackedVector3Array = verts.duplicate()
+        for influence in influences:
+            if int(influence["surface"]) != s:
+                continue
+            var at: int = influence["index"]
+            var near: Array = neighbors[at]
+            if near.is_empty():
+                continue
+            var average := Vector3.ZERO
+            for neighbor_index in near:
+                average += verts[neighbor_index]
+            average /= float(near.size())
+            var blend: float = clampf(strength * float(influence["weight"]), 0.0, 1.0)
+            var smoothed: Vector3 = verts[at].lerp(average, blend)
+            if mirror_enabled and absf(verts[at].x) <= 0.0002:
+                smoothed.x = 0.0
+            if smoothed.distance_squared_to(verts[at]) > 0.000000000001:
+                changed_vertices[at] = smoothed
+                changes += 1
+        arrays[Mesh.ARRAY_VERTEX] = changed_vertices
+        surfaces[s]["arrays"] = arrays
+    if changes > 0:
+        _undo_stack.append(before)
+        if _undo_stack.size() > MAX_HISTORY:
+            _undo_stack.pop_front()
+        _redo_stack.clear()
+        _rebuild()
+        _refresh_weld()
 
 func end_stroke() -> void:
     if not _stroke_active:
@@ -130,6 +225,7 @@ func end_stroke() -> void:
         _redo_stack.clear()
         _refresh_weld()
     _stroke_before = []
+    _stroke_influences.clear()
     _stroke_active = false
     _stroke_changed = false
 
@@ -162,14 +258,12 @@ func recalculate_normals() -> void:
     if target == null:
         return
     end_stroke()
-    _undo_stack.append(_snapshot())
-    if _undo_stack.size() > MAX_HISTORY:
-        _undo_stack.pop_front()
+    # Normal rebuilding is a destructive shading operation, not position history.
     _redo_stack.clear()
     for s in range(surfaces.size()):
         var arr: Array = surfaces[s]["arrays"]
         var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
-        var indices: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+        var indices: PackedInt32Array = arr[Mesh.ARRAY_INDEX] if arr[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
         var normals := PackedVector3Array()
         normals.resize(verts.size())
         var count: int = indices.size() if not indices.is_empty() else verts.size()
