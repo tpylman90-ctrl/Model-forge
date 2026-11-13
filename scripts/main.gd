@@ -413,8 +413,8 @@ func _choose_mesh(index: int) -> void:
 func _cycle_vertex(direction: int) -> void:
     if edit.target == null:
         return
-    var s := edit.selected_surface
-    var i := edit.selected_vertex
+    var s: int = edit.selected_surface
+    var i: int = edit.selected_vertex
     if s < 0:
         s = 0
         i = 0
@@ -482,7 +482,7 @@ func _frame_model() -> void:
         for x in [0.0, 1.0]:
             for y in [0.0, 1.0]:
                 for z in [0.0, 1.0]:
-                    var corner := instance.to_global(local_bounds.position + local_bounds.size * Vector3(x, y, z))
+                    var corner: Vector3 = instance.to_global(local_bounds.position + local_bounds.size * Vector3(x, y, z))
                     if not found:
                         bounds = AABB(corner, Vector3.ZERO)
                         found = true
@@ -571,7 +571,7 @@ func _pointer_move(position: Vector2) -> void:
         var scale := orbit_distance * 0.0017
         var delta_world := camera.global_transform.basis.x * delta_pixels.x * scale
         delta_world += camera.global_transform.basis.y * -delta_pixels.y * scale
-        var delta_local := edit.target.global_transform.basis.inverse() * delta_world
+        var delta_local: Vector3 = edit.target.global_transform.basis.inverse() * delta_world
         match axis_picker.selected:
             1:
                 delta_local = Vector3(delta_pixels.x * scale, 0, 0)
@@ -596,7 +596,7 @@ func _pointer_end() -> void:
             var scale := orbit_distance * 0.0017
             var d_world := camera.global_transform.basis.x * px.x * scale
             d_world += camera.global_transform.basis.y * -px.y * scale
-            var d_local := edit.target.global_transform.basis.inverse() * d_world
+            var d_local: Vector3 = edit.target.global_transform.basis.inverse() * d_world
             match axis_picker.selected:
                 1:
                     d_local = Vector3(px.x * scale, 0, 0)
@@ -624,7 +624,7 @@ func _pick_vertex(position: Vector2) -> bool:
         var vertices: PackedVector3Array = edit.surfaces[s]["arrays"][Mesh.ARRAY_VERTEX]
         var stride := maxi(1, ceili(float(vertices.size()) / 30000.0))
         for i in range(0, vertices.size(), stride):
-            var world := edit.target.to_global(vertices[i])
+            var world: Vector3 = edit.target.to_global(vertices[i])
             if camera.is_position_behind(world):
                 continue
             var point := camera.unproject_position(world)
