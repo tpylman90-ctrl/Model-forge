@@ -383,6 +383,7 @@ func _show_tab(index: int) -> void:
     if edit_toggle != null and index != 0:
         edit_toggle.button_pressed = false
     _update_touch_hint()
+    _refresh_selection_highlight()
     _update_marker()
     if status_label != null:
         var messages := [
@@ -983,7 +984,7 @@ func _refresh_selection_highlight() -> void:
     if not selection_highlight_enabled or edit.target == null or selection_outline == null:
         _clear_selection_highlight()
         return
-    var whole_model := _is_whole_model_mode()
+    var whole_model := active_tab == 1 and _is_whole_model_mode()
     var intended: MeshInstance3D = null if whole_model else edit.target
     if selected_overlay_mesh != intended:
         if selected_overlay_mesh != null and is_instance_valid(selected_overlay_mesh):
@@ -1001,7 +1002,7 @@ func _update_selection_outline() -> void:
         if selection_outline != null:
             selection_outline.visible = false
         return
-    var targets: Array = mesh_nodes if _is_whole_model_mode() else [edit.target]
+    var targets: Array = mesh_nodes if active_tab == 1 and _is_whole_model_mode() else [edit.target]
     if targets.is_empty():
         selection_outline.visible = false
         return
@@ -1145,7 +1146,7 @@ func _update_project_header() -> void:
     if project_label != null:
         project_label.text = ("%s%s" % [project_name, " • UNSAVED" if dirty else " • SAVED"])
     if part_info_label != null:
-        if _is_whole_model_mode():
+        if active_tab == 1 and _is_whole_model_mode():
             part_info_label.text = "ALL %d PARTS" % mesh_nodes.size()
         elif edit.target != null:
             part_info_label.text = "%d/%d • %s" % [selected_mesh_index + 1, mesh_nodes.size(), edit.target.name]
