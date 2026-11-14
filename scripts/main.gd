@@ -621,7 +621,8 @@ func _request_save_glb() -> void:
             return
         var absolute_path := ProjectSettings.globalize_path(private_path)
         _notify("Choose a location for your edited model.")
-        android_file_bridge.saveDocument(absolute_path, "model-forge-edited.glb")
+        var suggested := project_name.get_basename() + "-edited.glb"
+        android_file_bridge.saveDocument(absolute_path, suggested)
         return
     _notify("SAVE pressed — choose where to export your model.")
     _show_file_picker("save")
@@ -738,6 +739,10 @@ func _load_glb(path: String) -> void:
     _clear_asset()
     asset_host.add_child(result)
     project_name = path.get_file()
+    # SAF copies into a private cache as UUID_original-name.glb.
+    # Show the original filename in the project bar.
+    if project_name.length() > 37 and project_name.substr(36, 1) == "_":
+        project_name = project_name.substr(37)
     _index_meshes()
     _frame_model()
     _mark_clean()
