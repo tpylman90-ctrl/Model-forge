@@ -1,6 +1,7 @@
 extends Control
 ## Model Forge v0.4: Android-first part and surface editing.
 const MeshEdit = preload("res://scripts/mesh_editor.gd")
+const AxisGizmo = preload("res://scripts/axis_gizmo.gd")
 const DARK := Color("#101924")
 const PANEL := Color("#162231")
 const ACCENT := Color("#3ddbc1")
@@ -52,7 +53,7 @@ var soft_radius_slider: HSlider
 var soft_radius_label: Label
 var surface_profile_picker: OptionButton
 var section_axis_picker: OptionButton
-var gizmo_root: Node3D
+var gizmo_root
 var gizmo_handles: Array = []
 var gizmo_axis: int = -1
 var gizmo_drag_active: bool = false
@@ -64,7 +65,7 @@ var gizmo_world_length: float = 1.0
 var gizmo_drag_start_screen: Vector2
 var gizmo_drag_axis_screen: Vector2
 var gizmo_drag_px_length: float = 1.0
-var gizmo_drag_vertex_editor: RefCounted
+var gizmo_drag_vertex_editor
 var gizmo_last_world_delta: Vector3 = Vector3.ZERO
 var help_dialog: AcceptDialog
 var open_dialog: FileDialog
@@ -592,6 +593,8 @@ func _create_scene() -> void:
     wire_preview.material_override = wiremat
     wire_preview.visible = false
     helpers.add_child(wire_preview)
+    gizmo_root = AxisGizmo.new()
+    helpers.add_child(gizmo_root)
     _update_camera()
 
 func _make_grid() -> void:
@@ -868,6 +871,9 @@ func _clear_asset() -> void:
     mesh_picker.clear()
     marker.visible = false
     wire_preview.mesh = null
+    if gizmo_root != null:
+        gizmo_root.visible = false
+    gizmo_drag_active = false
 
 func _index_meshes() -> void:
     mesh_nodes.clear()
@@ -1143,11 +1149,13 @@ func _update_marker() -> void:
     marker.visible = edit.has_selection() and (active_tab == 0 or (active_tab == 1 and move_target_picker != null and move_target_picker.selected == 0))
     if not edit.has_selection():
         vertex_label.text = "Vertex: none"
+        _update_gizmo()
         return
     var point: Vector3 = edit.vertex_position()
     marker.global_position = edit.target.to_global(point)
     marker.scale = Vector3.ONE * maxf(0.035, orbit_distance * 0.011)
     vertex_label.text = "Point %d\n%.2f, %.2f, %.2f" % [edit.selected_vertex, point.x, point.y, point.z]
+    _update_gizmo()
 
 func _frame_model() -> void:
     if mesh_nodes.is_empty():
@@ -1181,6 +1189,135 @@ func _update_camera() -> void:
     ) * orbit_distance
     camera.global_position = orbit_center + look_from
     camera.look_at(orbit_center, Vector3.UP)
+    _update_gizmo()
+
+func _canvas_to_viewport(position: Vector2) -> Vector2:
+    var dimensions: Vector2 = canvas.size
+    return position * Vector2(scene_view.size) / Vector2(maxf(dimensions.x, 1.0), maxf(dimensions.y, 1.0))
+
+func _update_gizmo() -> void:
+    if gizmo_root == null or camera == null:
+        return
+    if active_tab != 1 or edit.target == null:
+        gizmo_root.visible = false
+        return
+    var node: MeshInstance3D = edit.target
+    var pivot: Vector3
+    if move_target_picker != null and move_target_picker.selected == 0:
+        if not edit.has_selection():
+            gizmo_root.visible = false
+            return
+        pivot = node.to_global(edit.vertex_position())
+    else:
+        pivot = node.to_global(node.get_aabb().get_center())
+    var length: float = clampf(camera.global_position.distance_to(pivot) * 0.13, 0.20, 80.0)
+    gizmo_root.place(pivot, length)
+    gizmo_root.visible = true
+
+func _pick_gizmo_axis(position: Vector2) -> int:
+    if gizmo_root == null or not gizmo_root.visible:
+        return -1
+    return gizmo_root.hit_axis(_canvas_to_viewport(position), camera)
+
+func _begin_gizmo_drag(axis: int, position: Vector2) -> bool:
+    if axis < 0 or axis > 2 or edit.target == null:
+        return false
+    gizmo_drag_part = move_target_picker.selected == 1
+    if not gizmo_drag_part and not edit.begin_stroke():
+        return false
+    gizmo_axis = axis
+    gizmo_drag_active = true
+    gizmo_drag_changed = false
+    gizmo_last_world_delta = Vector3.ZERO
+    gizmo_start_transform = edit.target.transform
+    gizmo_start_world = gizmo_root.center_world()
+    gizmo_world_length = gizmo_root.handle_length
+    gizmo_drag_start_screen = _canvas_to_viewport(position)
+    gizmo_drag_axis_screen = camera.unproject_position(gizmo_root.tip_world(axis)) - camera.unproject_position(gizmo_start_world)
+    gizmo_drag_px_length = gizmo_drag_axis_screen.length_squared()
+    gizmo_drag_vertex_editor = edit
+    _notify("Drag the %s handle to move %s." % [["X (red)", "Y (green)", "Z (blue)"][axis], "part" if gizmo_drag_part else "point"])
+    return true
+
+func _gizmo_delta_for_position(position: Vector2) -> Vector3:
+    var moved_pixels: Vector2 = _canvas_to_viewport(position) - gizmo_drag_start_screen
+    var units: float
+    if gizmo_drag_px_length > 225.0:
+        units = moved_pixels.dot(gizmo_drag_axis_screen) / gizmo_drag_px_length * (gizmo_world_length * 1.03)
+    else:
+        units = -moved_pixels.y * gizmo_world_length / 110.0
+    units = clampf(units, -100.0, 100.0)
+    match gizmo_axis:
+        0:
+            return Vector3(units, 0, 0)
+        1:
+            return Vector3(0, units, 0)
+        _:
+            return Vector3(0, 0, units)
+
+func _apply_gizmo_drag(position: Vector2, force: bool = false) -> void:
+    if not gizmo_drag_active or edit.target == null:
+        return
+    if not force and Time.get_ticks_msec() - last_rebuild_ms < 40:
+        return
+    var delta: Vector3 = _gizmo_delta_for_position(position)
+    if delta.is_equal_approx(gizmo_last_world_delta):
+        return
+    gizmo_last_world_delta = delta
+    gizmo_drag_changed = delta.length_squared() > 0.00000001
+    if gizmo_drag_part:
+        var parent: Node3D = edit.target.get_parent() as Node3D
+        if parent == null:
+            return
+        edit.target.transform = gizmo_start_transform
+        edit.target.position += parent.global_transform.basis.inverse() * delta
+        _geometry_changed()
+    else:
+        var local_delta: Vector3 = edit.target.global_transform.basis.inverse() * delta
+        edit.apply_stroke_delta(local_delta)
+    last_rebuild_ms = Time.get_ticks_msec()
+
+func _finish_gizmo_drag() -> void:
+    if not gizmo_drag_active:
+        return
+    if gizmo_drag_part:
+        var node: MeshInstance3D = edit.target
+        if node != null and not node.transform.is_equal_approx(gizmo_start_transform):
+            _push_history({"kind":"part", "node":node, "before":gizmo_start_transform, "after":node.transform})
+            _mark_dirty()
+    elif gizmo_drag_vertex_editor != null:
+        gizmo_drag_vertex_editor.end_stroke()
+    gizmo_drag_active = false
+    gizmo_drag_part = false
+    gizmo_axis = -1
+    gizmo_drag_vertex_editor = null
+    _update_gizmo()
+
+func _pick_part(position: Vector2) -> bool:
+    if mesh_nodes.is_empty():
+        return false
+    var screen: Vector2 = _canvas_to_viewport(position)
+    var ray_origin: Vector3 = camera.project_ray_origin(screen)
+    var ray_direction: Vector3 = camera.project_ray_normal(screen)
+    var best_depth: float = INF
+    var best_part := -1
+    for i in range(mesh_nodes.size()):
+        var part: MeshInstance3D = mesh_nodes[i]
+        if not part.visible or part.mesh == null:
+            continue
+        var local_start: Vector3 = part.to_local(ray_origin)
+        var local_direction: Vector3 = part.global_transform.basis.inverse() * ray_direction
+        var hit: Variant = part.get_aabb().grow(0.06).intersects_ray(local_start, local_direction)
+        if hit is Vector3:
+            var hit_world: Vector3 = part.to_global(hit)
+            var depth: float = hit_world.distance_squared_to(ray_origin)
+            if depth < best_depth:
+                best_depth = depth
+                best_part = i
+    if best_part >= 0:
+        _choose_mesh(best_part)
+        return true
+    return false
 
 func _canvas_input(event: InputEvent) -> void:
     # Android generates both native touch and synthesized mouse events when
@@ -1252,7 +1389,11 @@ func _pointer_start(position: Vector2) -> void:
     pointer_origin = position
     pointer_last = position
     stroke_moved = false
-    if edit_toggle.button_pressed and _pick_vertex(position):
+    if active_tab == 1:
+        var hit_axis: int = _pick_gizmo_axis(position)
+        if hit_axis >= 0 and _begin_gizmo_drag(hit_axis, position):
+            return
+    if edit_toggle.button_pressed and active_tab == 0 and _pick_vertex(position):
         pointer_dragging_vertex = edit.begin_stroke()
         _update_marker()
 
@@ -1261,6 +1402,9 @@ func _pointer_move(position: Vector2) -> void:
         return
     var displacement := position - pointer_last
     pointer_last = position
+    if gizmo_drag_active:
+        _apply_gizmo_drag(position)
+        return
     if pointer_dragging_vertex:
         var delta_pixels := position - pointer_origin
         var scale := orbit_distance * 0.0017
@@ -1286,10 +1430,19 @@ func _pointer_move(position: Vector2) -> void:
 func _pointer_end() -> void:
     if not pointer_down:
         return
-    if not pointer_dragging_vertex and active_tab == 0:
-        if pointer_last.distance_squared_to(pointer_origin) < 100.0:
-            if _pick_vertex(pointer_origin):
-                _update_marker()
+    if gizmo_drag_active:
+        _apply_gizmo_drag(pointer_last, true)
+        _finish_gizmo_drag()
+        pointer_down = false
+        pointer_dragging_vertex = false
+        return
+    if not pointer_dragging_vertex and pointer_last.distance_squared_to(pointer_origin) < 100.0:
+        if active_tab == 1:
+            _pick_part(pointer_origin)
+        elif active_tab == 0:
+            if not _pick_vertex(pointer_origin):
+                _pick_part(pointer_origin)
+            _update_marker()
     if pointer_dragging_vertex:
         # The final position is committed even if drag throttling skipped a frame.
         if pointer_last.distance_squared_to(pointer_origin) > 4.0:
