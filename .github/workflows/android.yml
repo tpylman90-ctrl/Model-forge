@@ -97,7 +97,8 @@ jobs:
         shell: bash
         run: |
           unzip -Z1 build/ModelForge-debug.apk | grep -F '.dex'
-          if unzip -p build/ModelForge-debug.apk 'classes*.dex' | strings | grep -F 'ModelForgeFiles' > /dev/null; then
+          unzip -p build/ModelForge-debug.apk 'classes*.dex' > bridge-classes.dex
+          if grep -a -F 'ModelForgeFiles' bridge-classes.dex > /dev/null; then
             echo "ModelForgeFiles class included in APK"
           else
             echo "ERROR: APK missing native ModelForgeFiles bridge"
