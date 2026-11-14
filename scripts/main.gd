@@ -25,7 +25,7 @@ var clay_material: StandardMaterial3D
 var isolate_active: bool = false
 var saved_visibility: Dictionary = {}
 const DRAFT_PATH := "user://model-forge-working-draft.glb"
-const HISTORY_LIMIT := 60
+const HISTORY_LIMIT := 20
 var canvas: SubViewportContainer
 var scene_view: SubViewport
 var camera: Camera3D
