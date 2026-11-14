@@ -98,7 +98,7 @@ func _run() -> void:
 
     app._mark_dirty()
     app._save_draft()
-    if not FileAccess.file_exists(app.DRAFT_PATH):
+    if not FileAccess.file_exists("user://model-forge-working-draft.glb"):
         _fail("local working draft was not created")
         return
     app._restore_draft()
