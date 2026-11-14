@@ -21,3 +21,6 @@ textures/vram_compression/import_etc2_astc=true
 renderer/rendering_method="mobile"
 renderer/rendering_method.mobile="mobile"
 environment/defaults/default_clear_color=Color(0.07, 0.10, 0.15, 1)
+
+[editor_plugins]
+enabled=PackedStringArray("res://addons/ModelForgeFiles/plugin.cfg")
