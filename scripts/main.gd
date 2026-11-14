@@ -306,6 +306,7 @@ func _show_tab(index: int) -> void:
     if edit_toggle != null and index != 0:
         edit_toggle.button_pressed = false
     _update_touch_hint()
+    _update_marker()
     if status_label != null:
         var messages := [
             "SHAPE • Choose a part; tap a point; enable EDIT POINTS to drag.",
@@ -481,7 +482,7 @@ func _create_scene() -> void:
     wiremat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
     wiremat.albedo_color = Color(0.21, 0.96, 0.83, 0.6)
     wiremat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-    wiremat.wireframe = true
+    # Godot 4 does not support StandardMaterial3D.wireframe; draw real mesh edges.
     wiremat.no_depth_test = true
     wire_preview.material_override = wiremat
     wire_preview.visible = false
@@ -498,7 +499,7 @@ func _make_grid() -> void:
         lines.surface_add_vertex(Vector3(-14, -0.85, n))
         lines.surface_add_vertex(Vector3(14, -0.85, n))
     lines.surface_end()
-    var grid_node := MeshInstance3D.new()
+    grid_node = MeshInstance3D.new()
     grid_node.mesh = lines
     var mat := StandardMaterial3D.new()
     mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -674,6 +675,11 @@ func _load_glb(path: String) -> void:
     if result == null:
         _notify("GLB contains no importable scene.")
         return
+    if dirty and path != DRAFT_PATH:
+        if not _save_glb(DRAFT_PATH, false):
+            _notify("Import canceled: unable to back up current unsaved work.")
+            result.free()
+            return
     _clear_asset()
     asset_host.add_child(result)
     project_name = path.get_file()
@@ -686,6 +692,8 @@ func _save_glb(path: String, clear_dirty: bool = true) -> bool:
     if asset_host.get_child_count() == 0:
         _notify("Nothing to export.")
         return false
+    # Isolate/Solo is viewport-only; always export the complete model.
+    _show_all_parts()
     var document := GLTFDocument.new()
     var state := GLTFState.new()
     var problem := document.append_from_scene(asset_host, state)
@@ -965,12 +973,47 @@ func _select_part_node(node: MeshInstance3D) -> void:
 
 func _geometry_changed() -> void:
     if edit.target != null:
-        wire_preview.mesh = edit.target.mesh
         wire_preview.global_transform = edit.target.global_transform
+        if wire_preview.visible:
+            _rebuild_wire_overlay()
     _update_marker()
 
+func _rebuild_wire_overlay() -> void:
+    if edit.target == null:
+        wire_preview.mesh = null
+        return
+    # Draw actual triangle edges. Cap the line count for mobile performance.
+    var points := PackedVector3Array()
+    var max_tris_per_surface := maxi(250, 15000 / maxi(edit.surfaces.size(), 1))
+    for surface in edit.surfaces:
+        var arrays: Array = surface["arrays"]
+        var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+        var ids: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+        var tri_count: int = (ids.size() if not ids.is_empty() else verts.size()) / 3
+        var stride: int = maxi(1, ceili(float(tri_count) / float(max_tris_per_surface)))
+        for t in range(0, tri_count, stride):
+            var at: int = t * 3
+            var a: int = ids[at] if not ids.is_empty() else at
+            var b: int = ids[at + 1] if not ids.is_empty() else at + 1
+            var c: int = ids[at + 2] if not ids.is_empty() else at + 2
+            if a >= verts.size() or b >= verts.size() or c >= verts.size():
+                continue
+            points.append_array(PackedVector3Array([
+                verts[a], verts[b], verts[b], verts[c], verts[c], verts[a]
+            ]))
+    if points.is_empty():
+        wire_preview.mesh = null
+        return
+    var line_arrays: Array = []
+    line_arrays.resize(Mesh.ARRAY_MAX)
+    line_arrays[Mesh.ARRAY_VERTEX] = points
+    var overlay := ArrayMesh.new()
+    overlay.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, line_arrays)
+    wire_preview.mesh = overlay
+    wire_preview.global_transform = edit.target.global_transform
+
 func _update_marker() -> void:
-    marker.visible = edit.has_selection()
+    marker.visible = edit.has_selection() and (active_tab == 0 or (active_tab == 1 and move_target_picker != null and move_target_picker.selected == 0))
     if not edit.has_selection():
         vertex_label.text = "Vertex: none"
         return
@@ -1180,7 +1223,12 @@ func _pick_vertex(position: Vector2) -> bool:
     return edit.select_vertex(best_s, best_v)
 
 func _create_demo() -> void:
+    if dirty and asset_host.get_child_count() > 0:
+        if not _save_glb(DRAFT_PATH, false):
+            _notify("Demo canceled: unable to back up your unsaved work.")
+            return
     _clear_asset()
+    project_name = "Hovercraft Demo"
     var demo := Node3D.new()
     demo.name = "Hovercraft_Demo"
     asset_host.add_child(demo)
@@ -1262,7 +1310,8 @@ func _create_demo() -> void:
         demo.add_child(pod)
     _index_meshes()
     _frame_model()
-    _notify("Demo loaded. Try X+ on a hull vertex, then SAVE GLB.")
+    _mark_clean()
+    _notify("Demo loaded. Try moving a booster PART, then EXPORT GLB.")
 
 func _notify(message: String) -> void:
     if status_label != null:
