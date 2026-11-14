@@ -35,6 +35,7 @@ var help_dialog: AcceptDialog
 var open_dialog: FileDialog
 var open_button: Button
 var open_requests: int = 0
+var android_file_bridge: Object
 var last_picker_route: String = ""
 var save_dialog: FileDialog
 var image_dialog: FileDialog
@@ -57,6 +58,7 @@ func _ready() -> void:
     _create_ui()
     _create_scene()
     _create_file_dialogs()
+    _connect_android_file_bridge()
     edit.geometry_changed.connect(_geometry_changed)
     _create_demo()
     _notify("Ready. Select a body vertex and drag it, or use the axis buttons.")
@@ -473,20 +475,81 @@ func _file_dialog(mode: int, filters: PackedStringArray) -> FileDialog:
 
 # Use the Android Storage Access Framework through DisplayServer rather
 # than relying on FileDialog popup/window behavior. Always report button taps.
+func _connect_android_file_bridge() -> void:
+    if OS.get_name() != "Android":
+        return
+    if Engine.has_singleton("ModelForgeFiles"):
+        android_file_bridge = Engine.get_singleton("ModelForgeFiles")
+        if not android_file_bridge.file_result.is_connected(_android_document_result):
+            android_file_bridge.file_result.connect(_android_document_result)
+        print("MODEL_FORGE_SAF: READY")
+    else:
+        push_warning("MODEL_FORGE_SAF: MISSING native Android file bridge")
+        _notify("Android file access module unavailable. Use an APK with ModelForgeFiles installed.")
+
+
 func _request_open_glb() -> void:
     open_requests += 1
-    _notify("OPEN pressed — launching Android Files picker. Choose your .glb model.")
+    if OS.get_name() == "Android":
+        if android_file_bridge == null:
+            _notify("OPEN unavailable: native file bridge missing from this APK.")
+            return
+        last_picker_route = "android_saf"
+        _notify("Opening Android Files… choose your GLB from Downloads or another location.")
+        android_file_bridge.openDocument("model")
+        return
+    _notify("OPEN pressed — choose a .glb model.")
     _show_file_picker("open")
 
 
 func _request_save_glb() -> void:
-    _notify("SAVE pressed — choose where to store the edited GLB.")
+    if OS.get_name() == "Android":
+        if android_file_bridge == null:
+            _notify("SAVE unavailable: native file bridge missing from this APK.")
+            return
+        var private_path := "user://model-forge-export.glb"
+        _save_glb(private_path)
+        if not FileAccess.file_exists(private_path):
+            _notify("SAVE failed: could not prepare a GLB export.")
+            return
+        var absolute_path := ProjectSettings.globalize_path(private_path)
+        _notify("Choose a location for your edited model.")
+        android_file_bridge.saveDocument(absolute_path, "model-forge-edited.glb")
+        return
+    _notify("SAVE pressed — choose where to export your model.")
     _show_file_picker("save")
 
 
 func _request_reference() -> void:
-    _notify("PHOTO pressed — choose a PNG, JPG or WebP reference.")
+    if OS.get_name() == "Android":
+        if android_file_bridge == null:
+            _notify("PHOTO unavailable: native file bridge missing.")
+            return
+        _notify("Opening Android Files… choose a reference photo.")
+        android_file_bridge.openDocument("photo")
+        return
     _show_file_picker("photo")
+
+
+func _android_document_result(kind: String, location: String, status: String) -> void:
+    print("MODEL_FORGE_SAF: result kind=", kind, " status=", status,
+        " has_path=", not location.is_empty())
+    if status == "canceled":
+        _notify("File picker closed without selecting a document.")
+        return
+    if status != "ok":
+        _notify("Android file access error: " + status)
+        return
+    if location.is_empty():
+        _notify("Android returned no document path. Try a local file from Downloads.")
+        return
+    if kind == "model":
+        _notify("Document received. Importing GLB…")
+        _load_glb(location)
+    elif kind == "photo":
+        _load_reference(location)
+    elif kind == "save":
+        _notify("Edited GLB saved to the selected Android document.")
 
 
 func _show_file_picker(kind: String) -> void:
