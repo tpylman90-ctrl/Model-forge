@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: barichello/godot-ci:4.5.2
-    timeout-minutes: 35
+    timeout-minutes: 55
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -34,6 +34,18 @@ jobs:
         run: |
           yes | sdkmanager --sdk_root=/usr/lib/android-sdk --licenses >/dev/null || true
           sdkmanager --sdk_root=/usr/lib/android-sdk "platform-tools" "platforms;android-35" "build-tools;35.0.1"
+      - name: Configure Gradle for Android plugin
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Compile native Android document bridge
+        shell: bash
+        run: |
+          gradle -p android_plugin --no-daemon --stacktrace :plugin:assembleDebug
+          mkdir -p addons/ModelForgeFiles/bin/debug
+          cp android_plugin/plugin/build/outputs/aar/plugin-debug.aar addons/ModelForgeFiles/bin/debug/ModelForgeFiles-debug.aar
+          test -s addons/ModelForgeFiles/bin/debug/ModelForgeFiles-debug.aar
+          unzip -l addons/ModelForgeFiles/bin/debug/ModelForgeFiles-debug.aar | grep classes.jar
       - name: Verify engine and import project
         shell: bash
         run: |
@@ -51,6 +63,9 @@ jobs:
       - name: Validate Open GLB and Save GLB native picker callbacks
         shell: bash
         run: godot --headless --path . --script res://tests/picker_smoke.gd
+      - name: Check SAF plugin callbacks in GDScript
+        shell: bash
+        run: godot --headless --path . --script res://tests/saf_smoke.gd
       - name: Prepare debug signing
         shell: bash
         run: |
@@ -67,9 +82,10 @@ jobs:
       - name: Export APK
         shell: bash
         run: |
-          godot --headless --path . --export-debug Android build/ModelForge-debug.apk
+          godot --headless --path . --install-android-build-template --export-debug Android build/ModelForge-debug.apk
           test -s build/ModelForge-debug.apk
           ls -lh build/ModelForge-debug.apk
+          unzip -p build/ModelForge-debug.apk classes.dex | strings | grep -q 'org/modelforge/files/ModelForgeFiles'
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
