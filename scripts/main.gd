@@ -1,5 +1,5 @@
 extends Control
-## Model Forge v0.4: Android-first part and surface editing.
+## Model Forge v0.6: highlighted selection, part finder and whole-model editing.
 const MeshEdit = preload("res://scripts/mesh_editor.gd")
 const AxisGizmo = preload("res://scripts/axis_gizmo.gd")
 const DARK := Color("#101924")
@@ -16,6 +16,17 @@ var project_name: String = "Untitled"
 var project_label: Label
 var move_target_picker: OptionButton
 var part_info_label: Label
+var part_search: LineEdit
+var filtered_mesh_indices: Array = []
+var selected_mesh_index: int = -1
+var highlight_toggle: CheckButton
+var selection_overlay_material: StandardMaterial3D
+var selection_outline: MeshInstance3D
+var selected_overlay_mesh: MeshInstance3D
+var selected_original_overlay: Material
+var selection_highlight_enabled: bool = true
+var gizmo_drag_model: bool = false
+var gizmo_model_before: Array = []
 var mirror_toggle: CheckButton
 var soft_toggle: CheckButton
 var grid_node: MeshInstance3D
@@ -187,16 +198,22 @@ func _create_ui() -> void:
     var shape_row := HBoxContainer.new()
     tool_panels[0].add_child(shape_row)
     mesh_picker = OptionButton.new()
-    mesh_picker.custom_minimum_size = Vector2(260, 56)
+    mesh_picker.custom_minimum_size = Vector2(205, 56)
     mesh_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    mesh_picker.item_selected.connect(_choose_mesh)
+    mesh_picker.item_selected.connect(_choose_filtered_mesh)
     shape_row.add_child(mesh_picker)
+    part_search = LineEdit.new()
+    part_search.placeholder_text = "Find part..."
+    part_search.custom_minimum_size = Vector2(190, 56)
+    part_search.add_theme_font_size_override("font_size", 19)
+    part_search.text_changed.connect(_part_search_changed)
+    shape_row.add_child(part_search)
     _button(shape_row, "◀ PART", func(): _cycle_part(-1))
     _button(shape_row, "PART ▶", func(): _cycle_part(1))
     _button(shape_row, "◀ POINT", func(): _cycle_vertex(-1))
     _button(shape_row, "POINT ▶", func(): _cycle_vertex(1))
     vertex_label = _label(shape_row, "No point", 15, Color.WHITE)
-    vertex_label.custom_minimum_size.x = 198
+    vertex_label.custom_minimum_size.x = 158
     var shape_options := HBoxContainer.new()
     shape_options.add_theme_constant_override("separation", 12)
     tool_panels[0].add_child(shape_options)
@@ -258,6 +275,7 @@ func _create_ui() -> void:
     move_target_picker.custom_minimum_size = Vector2(275, 52)
     move_target_picker.add_item("SELECTED POINT")
     move_target_picker.add_item("WHOLE PART")
+    move_target_picker.add_item("WHOLE MODEL")
     move_target_picker.select(1)
     move_target_picker.item_selected.connect(_move_target_changed)
     target_row.add_child(move_target_picker)
@@ -293,7 +311,7 @@ func _create_ui() -> void:
     for axis in ["SCREEN", "X AXIS", "Y AXIS", "Z AXIS"]:
         axis_picker.add_item(axis)
     move_settings.add_child(axis_picker)
-    _label(move_settings, "DRAG X RED  •  Y GREEN  •  Z BLUE handles directly on the model", 15, ACCENT)
+    _label(move_settings, "RED X • GREEN Y • BLUE Z: drag to move. WHOLE MODEL moves every part.", 15, ACCENT)
 
     # View: preset cameras, wireframe inspection and orbit-only mode.
     var views := HBoxContainer.new()
@@ -314,6 +332,11 @@ func _create_ui() -> void:
     clay_toggle.text = "CLAY"
     clay_toggle.toggled.connect(_set_clay)
     view_row.add_child(clay_toggle)
+    highlight_toggle = CheckButton.new()
+    highlight_toggle.text = "HIGHLIGHT PART"
+    highlight_toggle.button_pressed = true
+    highlight_toggle.toggled.connect(_highlight_toggled)
+    view_row.add_child(highlight_toggle)
     _button(view_row, "SOLO PART", _toggle_isolate)
     _button(view_row, "SHOW ALL", _show_all_parts)
     _button(view_row, "PHOTO", _toggle_reference)
@@ -342,7 +365,7 @@ func _create_ui() -> void:
     status_label = _label(footer, "Model Forge ready", 15, MUTED)
     help_dialog = AcceptDialog.new()
     help_dialog.title = "Model Forge • Quick Guide"
-    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB (or FILES > DEMO MODEL).\n2. SHAPE: pick a PART and tap a vertex. Enable EDIT POINTS to pull it; OFF is safer camera mode.\n3. SOFT SHAPE: ROUND BRUSH adjusts a local area, BODY SECTION adjusts a cross-section (choose X/Y/Z), KEEP HARD EDGES avoids crossing strong normal changes. MIRROR X affects the opposite side.\n4. MOVE: WHOLE PART or SELECTED POINT. Touch and drag a colored handle directly on the model: X red, Y green, Z blue. Or use the precision X/Y/Z buttons.\n5. VIEW: Front, Side, Top, 3/4. CLAY and WIREFRAME reveal geometry, SOLO PART isolates temporarily.\n6. FILES: SAVE DRAFT keeps one working version on the phone; EXPORT GLB creates the shareable model.\n\nPinch to zoom and two-finger drag to pan. Imported GLB files are not overwritten automatically."
+    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB or use the demo.\n2. SHAPE: search for a component in Find part, or tap a visible part in the model. The selected part gets an amber outline and tinted surface so you can identify it. Tap a point and enable EDIT POINTS to deform it.\n3. MOVE: choose SELECTED POINT, WHOLE PART, or WHOLE MODEL. WHOLE MODEL moves, rotates, and scales the entire assembly without changing vertex shapes. Use colored X/Y/Z drag handles or numeric buttons.\n4. SOFT SHAPE: Round Brush, Body Section or Keep Hard Edges, with adjustable radius and Mirror X.\n5. VIEW: use CLAY, WIREFRAME, SOLO PART, and HIGHLIGHT PART for inspection.\n6. FILES: SAVE DRAFT keeps one working copy. EXPORT GLB writes the complete geometry without selection visuals.\n\nPinch to zoom; two-finger drag pans. Whole-model mode is a rigid assembly transform, not a multi-part sculpt."
     add_child(help_dialog)
     _show_tab(0)
 
