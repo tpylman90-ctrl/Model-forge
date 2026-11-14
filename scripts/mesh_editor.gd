@@ -229,6 +229,8 @@ func relax_selected(strength: float = 0.28) -> void:
             neighbors[c].append(a)
             neighbors[c].append(b)
         var changed_vertices: PackedVector3Array = verts.duplicate()
+        var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL] if arrays[Mesh.ARRAY_NORMAL] != null else PackedVector3Array()
+        var normal_limit: float = cos(deg_to_rad(guard_angle_degrees))
         for influence in influences:
             if int(influence["surface"]) != s:
                 continue
@@ -237,9 +239,19 @@ func relax_selected(strength: float = 0.28) -> void:
             if near.is_empty():
                 continue
             var average := Vector3.ZERO
+            var contributing := 0
             for neighbor_index in near:
+                if soft_profile == 2 and normals.size() == verts.size():
+                    var current_normal: Vector3 = normals[at]
+                    var neighbor_normal: Vector3 = normals[neighbor_index]
+                    if current_normal.length_squared() > 0.5 and neighbor_normal.length_squared() > 0.5:
+                        if current_normal.normalized().dot(neighbor_normal.normalized()) < normal_limit:
+                            continue
                 average += verts[neighbor_index]
-            average /= float(near.size())
+                contributing += 1
+            if contributing == 0:
+                continue
+            average /= float(contributing)
             var blend: float = clampf(strength * float(influence["weight"]), 0.0, 1.0)
             var smoothed: Vector3 = verts[at].lerp(average, blend)
             if mirror_enabled and absf(verts[at].x) <= 0.0002:
