@@ -1,62 +1,62 @@
 # Model Forge
 
-**Model Forge** is a free and open-source touchscreen GLB mesh editor for Android, built with Godot 4.5.2. Its main purpose is to let users correct a generated vehicle's real 3D shape without needing a desktop.
+**Model Forge** is a free, MIT-licensed, native Android GLB geometry editor designed to make real 3D edits practical on a phone. It serves Neon Forge Racing vehicle work, but there are no vehicle-specific formats or paid dependencies.
 
-## Current milestone: v0.2 touch-first editor
+## Version 0.4 — cohesive Android editing workflow
 
-The editor has four large, clearly labeled tool tabs with the model viewport taking most of the screen.
+The phone-first interface provides four context-sensitive pages. The model stays visible while editing; touch targets are deliberately large. The 3D view fills wide and narrow Android displays without fixed-aspect black bars.
 
-| Tab | What it does |
-| --- | --- |
-| **SHAPE** | Choose a mesh, tap or cycle through vertices, drag to reshape, switch on soft-selection falloff and optional mirrored editing, or tap **SMOOTH** to relax uneven geometry |
-| **MOVE** | Move the selected vertex in exact positive/negative X, Y, and Z steps; set the movement distance or lock touch-drag to an axis |
-| **VIEW** | Fit the model, jump to Front/Side/Top/3/4 cameras, show wireframe, orbit without editing, or rebuild normals |
-| **MORE** | Load or show/hide a floating reference photo, open a sample hovercraft, or see the quick-start help |
+| Page | Your task | Primary tools |
+| --- | --- | --- |
+| **SHAPE** | Refine body curvature | Select a mesh part; tap / cycle vertices; arm **EDIT POINTS** only when you want to drag; use **SOFT SHAPE**, radius, **MIRROR X**, and **SMOOTH** |
+| **MOVE** | Assemble independently engineered components | Switch between **WHOLE PART** (the default) and **SELECTED POINT**; move precisely on X/Y/Z; rotate a part ±5°; scale ±5% |
+| **VIEW** | Inspect geometry and form | FIT ALL, FOCUS PART, FRONT/SIDE/TOP/3/4; actual triangle-edge **WIREFRAME**, material-neutral **CLAY**, temporary SOLO PART, SHOW ALL, a floating photo reference |
+| **FILES** | Protect and share your work | OPEN GLB, EXPORT GLB, SAVE DRAFT, RESTORE DRAFT, import reference photo, demo model and help |
 
-A simple top bar keeps **OPEN GLB**, **SAVE GLB**, **UNDO**, **REDO**, and **HELP** visible.
+The top bar always exposes **OPEN**, **EXPORT GLB**, **UNDO** and **REDO**. A project label displays the active model and whether it has unsaved changes.
 
-### What works in source and automated tests
-- Android-native file selection for binary GLB imports and exports
-- Three-dimensional orbit, two-finger pan/zoom, camera presets, model framing
-- Per-mesh vertex picking, numerical movement, drag editing and X-axis mirroring
-- **New:** adjustable-radius soft brush (smooth falloff of nearby mesh vertices)
-- **New:** undoable one-click localized vertex smoothing
-- Reference-photo overlay supporting PNG, JPG, WebP
-- Editable demo hovercraft mesh
-- Test suite: vertex edit/undo/redo/GLB binary export/reimport, soft falloff, mirror, smoothing and layout regression checks
-- GitHub Actions build with automatic ARM64 Android APK artifacts
+### Quick start: editing a body panel
+1. Tap **OPEN** and choose a `.glb` file from Android's document picker (or use FILES → DEMO MODEL).
+2. In **SHAPE**, choose the component from the part dropdown, then tap a point. **EDIT POINTS** is off by default so orbiting cannot accidentally deform the mesh.
+3. Enable **EDIT POINTS** to drag the chosen vertex. Enable **SOFT SHAPE** and adjust Radius to push a surrounding area. Use **MIRROR X** when your chosen mesh is symmetric around its local X origin.
+4. In **MOVE**, leave WHOLE PART selected to position booster pods, body panels and other objects. Or switch to SELECTED POINT for precise coordinate changes.
+5. Inspect in **VIEW** using clay, wireframe and orthographic-like preset angles. **SOLO PART** temporarily hides other meshes, and exporting restores all parts first.
+6. In **FILES**, use **SAVE DRAFT** to keep a private working copy on the phone and **EXPORT GLB** to write a shareable version through Android's file picker.
 
-### Install a test APK
+### Storage and export
 
-Visit [Model Forge Android Builds](https://github.com/tpylman90-ctrl/Model-forge/actions/workflows/android.yml). Open the newest **successful** workflow run; download **ModelForge-Android-APK** from its Artifacts section, unzip, and install the APK on your phone.
+Godot 4.5.2's built-in Android picker could report valid file selections as canceled when it could not map a document URI to a filesystem path. This project includes the original, MIT-licensed **ModelForgeFiles** Android bridge: it uses Android's Storage Access Framework and streams the selected URI with `ContentResolver` into private working storage, without requesting unrestricted storage permissions. Export likewise uses Android's Create Document flow.
 
-The debug key is generated per run. If Android reports a signature mismatch when installing a newer build, uninstall the old experimental build first.
+Drafts are kept under app-private `user://` storage and may be lost if the app is uninstalled or app data is cleared. **Export important work as a GLB.** Imported source files are not overwritten automatically. When opening another model or replacing the current one with the demo, the app attempts to back up unsaved work in the local draft. The UI provides one draft slot.
 
-### Quick-start
+Material-neutral CLAY and SOLO PART are inspection-only views. Export restores actual materials and includes all parts. The wireframe is drawn as triangle edges; dense models display a sampled overlay for phone performance.
 
-1. Open **MORE → DEMO MODEL** to practice, or **OPEN GLB** to select your own file.
-2. In **SHAPE**, tap a point and drag it. Toggle **SOFT** to affect neighboring points; use the **Radius** slider to control the falloff.
-3. Toggle **MIRROR** if the mesh is centered on the X axis and you want symmetrical edits.
-4. In **MOVE**, use X/Y/Z +/- buttons for precise changes.
-5. In **VIEW**, switch to a front, side, top or 3/4 view. Choose **CAMERA ONLY** to orbit without accidentally dragging vertices.
-6. Use **UNDO** for unwanted mesh edits. **SAVE GLB** and choose a new file name. Reopen the exported model to confirm changes.
+### Current technical scope
+- Godot 4.5.2 Mobile renderer, GDScript, Android Gradle build and native Java SAF bridge.
+- Per-mesh edit sessions with a 20-operation cross-part undo/redo stack for geometry moves, smoothing and part transforms.
+- Imported mesh vertex editing, seam-aware changes, symmetry and adjustable smooth falloff.
+- Whole-part translation, rotation around local Y and uniform scaling.
+- Demo geometry, reference image display, focus camera, mobile-friendly four-page interface.
+- GitHub Actions CI smoke tests for geometry, GUI taps, GLB import/export, Android picker callbacks and the full editing workflow.
+- An ARM64 debug APK is published by every **successful** build.
 
-### Known limitations
+### Test APK
+Open the [Model Forge Android build workflow](https://github.com/tpylman90-ctrl/Model-forge/actions/workflows/android.yml), select a successful run, and download its `ModelForge-Android-APK` artifact. Extract the ZIP and install the APK on your phone. Debug keys may change between CI runs, requiring uninstall of older debug builds.
 
-This is a **v0.2 experimental build**, not a full Blender alternative. It is primarily a vertex-coordinate editor; it cannot yet add/cut faces, extrude, bevel, insert edge loops or retopologize. Multi-mesh undo is not global: selecting another mesh resets the current mesh's undo history. On complex GLBs, Godot's glTF importer/exporter may not faithfully round-trip nonstandard extensions, shader and material setups, rigging, animations, metadata, morph targets and other auxiliary data. Keep **backup copies** of the original GLB. Physical Android touch ergonomics and full-file SAF workflows still need device testing.
-
-A soft brush uses a **local-space radius** on the selected mesh. Smoothing uses a local triangle-neighbor average and can blunt sharp edges; use it gently and undo if unsuitable. With **MIRROR**, symmetry is measured from the selected mesh's local X=0 plane. Normals are not automatically rebuilt during deformations; VIEW → REBUILD NORMALS is a separate shading operation and not part of vertex undo history. Large meshes can lag during vertex picking, soft edits and mesh rebuilds.
-
-### Free development
-
-Godot Engine and Model Forge code use the MIT license; dependencies and contributions must be legally redistributable. The free GitHub Actions workflow provides headless tests and the Android debug APK export.
+### Important limitations
+- v0.4 is still an experimental **vertex/part editor**, not complete polygon or subdivision modeling software. Edge-loop insertion, face extrusion, bevel tools, UV edits, advanced material editing, skinning, animation preservation and sculpting remain future work.
+- Godot's glTF importer/exporter may not preserve every GLB extension, animation, morph target, rig, metadata item, shader, custom material or LOD. Always back up source assets and re-open exported files for validation.
+- The SOFT SHAPE radius is local to the selected mesh; if you want to affect multiple independent parts, edit those parts separately. Imported mesh symmetry depends on its local X=0 plane.
+- Large/dense assets may be slow during vertex selection and rebuilding. The viewport wireframe samples overly dense meshes to cap memory use.
+- Draft storage is private to the app; exporting is the way to retain and share work outside the app.
+- A successful headless build and CI test **does not substitute for physical Android-device testing**, particularly Android Storage Access Framework provider behavior and touch ergonomics.
 
 ### Roadmap
+1. Real-phone import/edit/export verification of several production GLBs from Neon Forge Racing and other sources.
+2. Visible gizmo handles, occlusion-aware mesh/vertex picking, selection by tapping model parts and customizable editing sensitivity.
+3. True proportional editing cages, automotive-surface highlight inspection and multi-view reference layouts.
+4. Cut/extrude/bevel and topology tools, mesh-specific materials and UV/texture inspectors.
+5. Portable structured feedback format and AssetWright/AI-assisted revision integration.
 
-1. Verify opening/editing/exporting our vehicle GLBs on a physical Android phone.
-2. Add improved occlusion-aware picking, editable mesh history across objects and customizable touch target sizing.
-3. Add selectable control cages, proportional editing handles and crease-aware edge smoothing.
-4. Implement topology editing tools and UV/material inspection.
-5. Add AssetWright-compatible geometry feedback and side-by-side GLB comparison.
-
-Feedback and pull requests are welcome.
+## License
+Model Forge code is MIT-licensed; Godot Engine is also MIT-licensed. Third-party contributions must include their own appropriate licenses. All dependencies are free and legally redistributable.
