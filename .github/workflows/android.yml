@@ -53,22 +53,22 @@ jobs:
           godot --headless --editor --path . --import --quit
       - name: Run headless geometry smoke test
         shell: bash
-        run: godot --headless --path . --script res://tests/smoke.gd
+        run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/smoke.gd
       - name: Validate soft shaping, symmetry and the touch toolbar
         shell: bash
-        run: godot --headless --path . --script res://tests/tools_smoke.gd
+        run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/tools_smoke.gd
       - name: Validate actual GUI tab click routing
         shell: bash
-        run: godot --headless --path . --script res://tests/touch_gui_smoke.gd
+        run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/touch_gui_smoke.gd
       - name: Validate Open GLB and Save GLB native picker callbacks
         shell: bash
-        run: godot --headless --path . --script res://tests/picker_smoke.gd
+        run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/picker_smoke.gd
       - name: Check SAF plugin callbacks in GDScript
         shell: bash
-        run: godot --headless --path . --script res://tests/saf_smoke.gd
+        run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/saf_smoke.gd
       - name: Validate full editing workflow on demo GLB
         shell: bash
-        run: godot --headless --path . --script res://tests/workflow_smoke.gd
+        run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/workflow_smoke.gd
       - name: Prepare debug signing
         shell: bash
         run: |
