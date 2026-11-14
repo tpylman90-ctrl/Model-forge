@@ -51,6 +51,9 @@ jobs:
         run: |
           godot --version
           godot --headless --editor --path . --import --quit
+      - name: Parse Godot editor GDScript before launching tests
+        shell: bash
+        run: godot --headless --path . --check-only --script res://scripts/main.gd
       - name: Run headless geometry smoke test
         shell: bash
         run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/smoke.gd
