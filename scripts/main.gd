@@ -347,6 +347,11 @@ func _create_ui() -> void:
     _show_tab(0)
 
 func _show_tab(index: int) -> void:
+    # Switching tools must never leave a 3D drag captured.
+    if gizmo_drag_active:
+        _finish_gizmo_drag()
+        pointer_down = false
+        pointer_dragging_vertex = false
     active_tab = index
     for i in range(tool_panels.size()):
         tool_panels[i].visible = (i == index)
@@ -381,9 +386,11 @@ func _update_touch_hint() -> void:
     if edit_toggle != null and edit_toggle.button_pressed:
         touch_hint.text = "EDIT MODE • Drag a point to pull • Switch EDIT POINTS off to orbit"
     elif active_tab == 0:
-        touch_hint.text = "VIEW MODE • Drag to rotate • Tap point to select • EDIT POINTS to reshape"
+        touch_hint.text = "SHAPE • Tap a point to select • EDIT POINTS ON to reshape • Drag to orbit while OFF"
+    elif active_tab == 1:
+        touch_hint.text = "MOVE • Tap any part to select • Drag RED X / GREEN Y / BLUE Z handle"
     else:
-        touch_hint.text = "VIEW MODE • Drag to rotate • Two fingers to zoom / pan"
+        touch_hint.text = "VIEW • Drag to rotate • Two fingers to zoom / pan"
 
 
 func _move_target_changed(index: int) -> void:
