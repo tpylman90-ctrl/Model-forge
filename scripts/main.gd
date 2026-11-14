@@ -1,5 +1,5 @@
 extends Control
-## Model Forge v0.2.1: touchscreen GLB editor with explicit view/edit separation.
+## Model Forge v0.4: Android-first part and surface editing.
 const MeshEdit = preload("res://scripts/mesh_editor.gd")
 const DARK := Color("#101924")
 const PANEL := Color("#162231")
@@ -7,6 +7,21 @@ const ACCENT := Color("#3ddbc1")
 const MUTED := Color("#9aafc2")
 
 var edit = MeshEdit.new()
+var editor_by_mesh: Dictionary = {}
+var undo_history: Array = []
+var redo_history: Array = []
+var dirty: bool = false
+var project_name: String = "Untitled"
+var project_label: Label
+var move_target_picker: OptionButton
+var part_info_label: Label
+var mirror_toggle: CheckButton
+var soft_toggle: CheckButton
+var grid_node: MeshInstance3D
+var isolate_active: bool = false
+var saved_visibility: Dictionary = {}
+const DRAFT_PATH := "user://model-forge-working-draft.glb"
+const HISTORY_LIMIT := 60
 var canvas: SubViewportContainer
 var scene_view: SubViewport
 var camera: Camera3D
@@ -59,9 +74,9 @@ func _ready() -> void:
     _create_scene()
     _create_file_dialogs()
     _connect_android_file_bridge()
-    edit.geometry_changed.connect(_geometry_changed)
     _create_demo()
-    _notify("Ready. Select a body vertex and drag it, or use the axis buttons.")
+    _mark_clean()
+    _notify("Ready. Select a part, then tap a point or use MOVE.")
 
 func _create_ui() -> void:
     # Four large tool tabs replace the two cramped permanent sidebars.
@@ -508,8 +523,7 @@ func _request_save_glb() -> void:
             _notify("SAVE unavailable: native file bridge missing from this APK.")
             return
         var private_path := "user://model-forge-export.glb"
-        _save_glb(private_path)
-        if not FileAccess.file_exists(private_path):
+        if not _save_glb(private_path, false):
             _notify("SAVE failed: could not prepare a GLB export.")
             return
         var absolute_path := ProjectSettings.globalize_path(private_path)
@@ -549,6 +563,7 @@ func _android_document_result(kind: String, location: String, status: String) ->
     elif kind == "photo":
         _load_reference(location)
     elif kind == "save":
+        _mark_clean()
         _notify("Edited GLB saved to the selected Android document.")
 
 
@@ -624,31 +639,36 @@ func _load_glb(path: String) -> void:
         return
     _clear_asset()
     asset_host.add_child(result)
+    project_name = path.get_file()
     _index_meshes()
     _frame_model()
-    _notify("Loaded %s — %d meshes" % [path.get_file(), mesh_nodes.size()])
+    _mark_clean()
+    _notify("Loaded %s — %d mesh parts" % [project_name, mesh_nodes.size()])
 
-func _save_glb(path: String) -> void:
+func _save_glb(path: String, clear_dirty: bool = true) -> bool:
     if asset_host.get_child_count() == 0:
         _notify("Nothing to export.")
-        return
+        return false
     var document := GLTFDocument.new()
     var state := GLTFState.new()
     var problem := document.append_from_scene(asset_host, state)
     if problem != OK:
         _notify("Export error: %s" % error_string(problem))
-        return
+        return false
     var bytes := document.generate_buffer(state)
     if bytes.is_empty():
         _notify("Export failed: generated GLB is empty.")
-        return
+        return false
     var out := FileAccess.open(path, FileAccess.WRITE)
     if out == null:
         _notify("Cannot write GLB: %s" % error_string(FileAccess.get_open_error()))
-        return
+        return false
     out.store_buffer(bytes)
     out.close()
+    if clear_dirty:
+        _mark_clean()
     _notify("Exported %s (%d KiB)" % [path.get_file(), int(bytes.size() / 1024)])
+    return true
 
 func _load_reference(path: String) -> void:
     var file := FileAccess.open(path, FileAccess.READ)
@@ -672,7 +692,12 @@ func _load_reference(path: String) -> void:
     _notify("Reference image loaded. HIDE closes the photo.")
 
 func _clear_asset() -> void:
+    _show_all_parts()
     edit.set_target(null)
+    editor_by_mesh.clear()
+    undo_history.clear()
+    redo_history.clear()
+    dirty = false
     for child in asset_host.get_children():
         asset_host.remove_child(child)
         child.queue_free()
@@ -701,12 +726,130 @@ func _collect_mesh_nodes(node: Node) -> void:
 func _choose_mesh(index: int) -> void:
     if index < 0 or index >= mesh_nodes.size():
         return
+    var instance: MeshInstance3D = mesh_nodes[index]
     mesh_picker.select(index)
-    if edit.set_target(mesh_nodes[index]):
-        if edit.vertex_count() > 0:
-            edit.select_vertex(0, 0)
+    if editor_by_mesh.has(instance):
+        edit = editor_by_mesh[instance]
+    else:
+        var next_editor = MeshEdit.new()
+        next_editor.soft_enabled = soft_toggle.button_pressed if soft_toggle != null else false
+        next_editor.mirror_enabled = mirror_toggle.button_pressed if mirror_toggle != null else false
+        next_editor.soft_radius = float(soft_radius_slider.value) if soft_radius_slider != null else 0.75
+        if next_editor.set_target(instance):
+            if next_editor.vertex_count() > 0:
+                next_editor.select_vertex(0, 0)
+        next_editor.geometry_changed.connect(_geometry_changed)
+        next_editor.edit_committed.connect(_record_geometry_commit.bind(next_editor))
+        editor_by_mesh[instance] = next_editor
+        edit = next_editor
     _geometry_changed()
-    _notify("Editing %s — %d mesh vertices" % [mesh_nodes[index].name, edit.vertex_count()])
+    _update_project_header()
+    _notify("Part %d/%d: %s • %d vertices" % [index + 1, mesh_nodes.size(), instance.name, edit.vertex_count()])
+
+func _cycle_part(direction: int) -> void:
+    if mesh_nodes.is_empty():
+        return
+    var at: int = mesh_picker.selected
+    _choose_mesh(posmod(at + direction, mesh_nodes.size()))
+
+func _record_geometry_commit(source: RefCounted) -> void:
+    _push_history({"kind": "geometry", "node": source.target})
+    _mark_dirty()
+
+func _push_history(change: Dictionary) -> void:
+    undo_history.append(change)
+    if undo_history.size() > HISTORY_LIMIT:
+        undo_history.pop_front()
+    redo_history.clear()
+
+func _mark_dirty() -> void:
+    dirty = true
+    _update_project_header()
+
+func _mark_clean() -> void:
+    dirty = false
+    _update_project_header()
+
+func _update_project_header() -> void:
+    if project_label != null:
+        project_label.text = ("%s%s" % [project_name, " • UNSAVED" if dirty else " • SAVED"])
+    if part_info_label != null and edit.target != null:
+        part_info_label.text = "%s" % edit.target.name
+
+func _selected_part() -> MeshInstance3D:
+    return edit.target if edit != null else null
+
+func _part_transform(direction: Vector3) -> void:
+    var node := _selected_part()
+    if node == null:
+        _notify("Select a part in SHAPE first.")
+        return
+    var before: Transform3D = node.transform
+    node.position += direction * float(step_box.value)
+    _push_history({"kind": "part", "node": node, "before": before, "after": node.transform})
+    _mark_dirty()
+    _geometry_changed()
+    _notify("Moved part %s by %.3f" % [node.name, float(step_box.value)])
+
+func _rotate_part(degrees: float) -> void:
+    var node := _selected_part()
+    if node == null:
+        return
+    var before: Transform3D = node.transform
+    node.rotation_degrees.y += degrees
+    _push_history({"kind": "part", "node": node, "before": before, "after": node.transform})
+    _mark_dirty()
+    _geometry_changed()
+    _notify("Rotated %s by %.1f degrees" % [node.name, degrees])
+
+func _scale_part(factor: float) -> void:
+    var node := _selected_part()
+    if node == null:
+        return
+    var before: Transform3D = node.transform
+    node.scale *= factor
+    _push_history({"kind": "part", "node": node, "before": before, "after": node.transform})
+    _mark_dirty()
+    _geometry_changed()
+    _notify("Scaled %s to %.0f%% of prior size" % [node.name, factor * 100.0])
+
+func _show_all_parts() -> void:
+    if not isolate_active:
+        return
+    for part in saved_visibility:
+        if is_instance_valid(part):
+            part.visible = bool(saved_visibility[part])
+    saved_visibility.clear()
+    isolate_active = false
+
+func _toggle_isolate() -> void:
+    if isolate_active:
+        _show_all_parts()
+        _notify("All parts visible again.")
+        return
+    var node := _selected_part()
+    if node == null:
+        return
+    saved_visibility.clear()
+    for part in mesh_nodes:
+        saved_visibility[part] = part.visible
+        part.visible = (part == node)
+    isolate_active = true
+    _notify("Solo view: %s. Tap SHOW ALL to restore." % node.name)
+
+func _save_draft() -> void:
+    if _save_glb(DRAFT_PATH, false):
+        _notify("Working draft saved on this phone. Project remains unsaved for export.")
+
+func _restore_draft() -> void:
+    if not FileAccess.file_exists(DRAFT_PATH):
+        _notify("No working draft yet. Use SAVE DRAFT first.")
+        return
+    _load_glb(DRAFT_PATH)
+    project_name = "Recovered draft"
+    _mark_dirty()
+    _notify("Working draft restored. Export GLB to keep a permanent copy.")
+
 
 func _cycle_vertex(direction: int) -> void:
     if edit.target == null:
@@ -731,27 +874,57 @@ func _cycle_vertex(direction: int) -> void:
         _update_marker()
 
 func _nudge(direction: Vector3) -> void:
+    if move_target_picker != null and move_target_picker.selected == 1:
+        _part_transform(direction)
+        return
     if not edit.has_selection():
-        _notify("Select a vertex first.")
+        _notify("Select a point in SHAPE first, or choose WHOLE PART.")
         return
     edit.move_step(direction * float(step_box.value))
     _update_marker()
 
 func _do_undo() -> void:
-    if not edit.can_undo():
-        _notify("No changes to undo on this mesh.")
+    if undo_history.is_empty():
+        _notify("Nothing to undo yet.")
         return
-    edit.undo()
-    _update_marker()
-    _notify("Undo applied.")
+    var operation: Dictionary = undo_history.pop_back()
+    redo_history.append(operation)
+    var node: MeshInstance3D = operation["node"]
+    if not is_instance_valid(node):
+        _notify("Undo target is no longer available.")
+        return
+    if operation["kind"] == "geometry":
+        _select_part_node(node)
+        edit.undo()
+    elif operation["kind"] == "part":
+        node.transform = operation["before"]
+    _geometry_changed()
+    _mark_dirty()
+    _notify("Undid last edit.")
 
 func _do_redo() -> void:
-    if not edit.can_redo():
-        _notify("No changes to redo on this mesh.")
+    if redo_history.is_empty():
+        _notify("Nothing to redo.")
         return
-    edit.redo()
-    _update_marker()
-    _notify("Redo applied.")
+    var operation: Dictionary = redo_history.pop_back()
+    undo_history.append(operation)
+    var node: MeshInstance3D = operation["node"]
+    if not is_instance_valid(node):
+        _notify("Redo target is no longer available.")
+        return
+    if operation["kind"] == "geometry":
+        _select_part_node(node)
+        edit.redo()
+    elif operation["kind"] == "part":
+        node.transform = operation["after"]
+    _geometry_changed()
+    _mark_dirty()
+    _notify("Redid last edit.")
+
+func _select_part_node(node: MeshInstance3D) -> void:
+    var index: int = mesh_nodes.find(node)
+    if index >= 0:
+        _choose_mesh(index)
 
 func _geometry_changed() -> void:
     if edit.target != null:
