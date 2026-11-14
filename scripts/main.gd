@@ -241,7 +241,7 @@ func _create_ui() -> void:
     _label(move_settings, "STEP SIZE", 17, MUTED)
     step_box = SpinBox.new()
     step_box.custom_minimum_size = Vector2(180, 56)
-    step_box.min_value = 0.001
+    step_box.min_value = 0.0
     step_box.max_value = 20.0
     step_box.step = 0.01
     step_box.value = 0.10
