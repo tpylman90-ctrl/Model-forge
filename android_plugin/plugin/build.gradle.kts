@@ -6,7 +6,7 @@ android {
     namespace = "org.modelforge.files"
     compileSdk = 35
     defaultConfig {
-        minSdk = 29
+        minSdk = 24
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
