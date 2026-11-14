@@ -1076,6 +1076,8 @@ func _rebuild_wire_overlay() -> void:
     wire_preview.global_transform = edit.target.global_transform
 
 func _update_marker() -> void:
+    if marker == null:
+        return
     marker.visible = edit.has_selection() and (active_tab == 0 or (active_tab == 1 and move_target_picker != null and move_target_picker.selected == 0))
     if not edit.has_selection():
         vertex_label.text = "Vertex: none"
