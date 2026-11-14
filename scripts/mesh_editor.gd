@@ -42,7 +42,13 @@ func set_target(instance: MeshInstance3D) -> bool:
         return false
     var source: Mesh = instance.mesh
     for i in range(source.get_surface_count()):
-        var primitive: int = source.surface_get_primitive_type(i)
+        # PrimitiveMesh (BoxMesh, SphereMesh, etc.) is triangle-only but does
+        # not implement ArrayMesh-specific surface metadata methods.
+        var primitive: int = Mesh.PRIMITIVE_TRIANGLES
+        var surface_name: String = "Surface_%d" % i
+        if source is ArrayMesh:
+            primitive = source.surface_get_primitive_type(i)
+            surface_name = source.surface_get_name(i)
         if primitive != Mesh.PRIMITIVE_TRIANGLES:
             continue
         var arrays: Array = source.surface_get_arrays(i).duplicate(true)
@@ -52,7 +58,7 @@ func set_target(instance: MeshInstance3D) -> bool:
             "arrays": arrays,
             "primitive": primitive,
             "material": source.surface_get_material(i),
-            "name": source.surface_get_name(i)
+            "name": surface_name
         })
     if surfaces.is_empty():
         return false
