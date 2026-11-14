@@ -1185,7 +1185,9 @@ func _commit_model_edit(before: Array) -> bool:
             changed = true
             break
     if changed:
-        _push_history({"kind": "model", "before": before, "after": after})
+        # Deep-copy the snapshot dictionaries. The drag gesture owns its
+        # temporary array and must not erase undo history when it resets.
+        _push_history({"kind": "model", "before": before.duplicate(true), "after": after.duplicate(true)})
         _mark_dirty()
     _geometry_changed()
     return changed
@@ -1579,7 +1581,7 @@ func _finish_gizmo_drag() -> void:
         gizmo_drag_vertex_editor.end_stroke()
     gizmo_drag_active = false
     gizmo_drag_model = false
-    gizmo_model_before.clear()
+    gizmo_model_before = []
     gizmo_drag_part = false
     gizmo_axis = -1
     gizmo_drag_vertex_editor = null
