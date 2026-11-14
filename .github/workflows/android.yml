@@ -29,23 +29,6 @@ jobs:
           cp /root/.config/godot/editor_settings-4.5.tres "$HOME/.config/godot/editor_settings-4.5.tres"
           test -f "$HOME/.local/share/godot/export_templates/4.5.2.stable/android_debug.apk"
           test -f "$HOME/.config/godot/editor_settings-4.5.tres"
-      - name: Install Godot 4.5 Android SDK platform and build tools
-        shell: bash
-        run: |
-          yes | sdkmanager --sdk_root=/usr/lib/android-sdk --licenses >/dev/null || true
-          sdkmanager --sdk_root=/usr/lib/android-sdk "platform-tools" "platforms;android-35" "build-tools;35.0.1"
-      - name: Configure Gradle for Android plugin
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.13'
-      - name: Compile native Android document bridge
-        shell: bash
-        run: |
-          gradle -p android_plugin --no-daemon --stacktrace :plugin:assembleDebug
-          mkdir -p addons/ModelForgeFiles/bin/debug
-          cp android_plugin/plugin/build/outputs/aar/plugin-debug.aar addons/ModelForgeFiles/bin/debug/ModelForgeFiles-debug.aar
-          test -s addons/ModelForgeFiles/bin/debug/ModelForgeFiles-debug.aar
-          unzip -l addons/ModelForgeFiles/bin/debug/ModelForgeFiles-debug.aar | grep classes.jar
       - name: Verify engine and import project
         shell: bash
         run: |
@@ -72,6 +55,23 @@ jobs:
       - name: Validate full editing workflow on demo GLB
         shell: bash
         run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/workflow_smoke.gd
+      - name: Install Godot 4.5 Android SDK platform and build tools
+        shell: bash
+        run: |
+          yes | sdkmanager --sdk_root=/usr/lib/android-sdk --licenses >/dev/null || true
+          sdkmanager --sdk_root=/usr/lib/android-sdk "platform-tools" "platforms;android-35" "build-tools;35.0.1"
+      - name: Configure Gradle for Android plugin
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Compile native Android document bridge
+        shell: bash
+        run: |
+          gradle -p android_plugin --no-daemon --stacktrace :plugin:assembleDebug
+          mkdir -p addons/ModelForgeFiles/bin/debug
+          cp android_plugin/plugin/build/outputs/aar/plugin-debug.aar addons/ModelForgeFiles/bin/debug/ModelForgeFiles-debug.aar
+          test -s addons/ModelForgeFiles/bin/debug/ModelForgeFiles-debug.aar
+          unzip -l addons/ModelForgeFiles/bin/debug/ModelForgeFiles-debug.aar | grep classes.jar
       - name: Prepare debug signing
         shell: bash
         run: |
