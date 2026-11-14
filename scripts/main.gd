@@ -950,6 +950,9 @@ func _save_glb(path: String, clear_dirty: bool = true) -> bool:
         _set_zebra(false)
     if resume_clay:
         _set_clay(false)
+    # Switching preview modes may automatically restore the amber tint.
+    # Clear it AFTER toggling inspectors, before serializing the actual GLB.
+    _clear_selection_highlight()
     var document := GLTFDocument.new()
     var state := GLTFState.new()
     var problem := document.append_from_scene(asset_host, state)
@@ -1003,10 +1006,10 @@ func _load_reference(path: String) -> void:
     _notify("Reference image loaded. HIDE closes the photo.")
 
 func _clear_asset() -> void:
-    _clear_selection_highlight()
     _show_all_parts()
     _set_zebra(false)
     _set_clay(false)
+    _clear_selection_highlight()
     edit.set_target(null)
     editor_by_mesh.clear()
     undo_history.clear()
