@@ -1660,34 +1660,86 @@ func _finish_gizmo_drag() -> void:
     gizmo_drag_vertex_editor = null
     _update_gizmo()
 
+func _ray_triangle_depth(instance: MeshInstance3D, ray_origin: Vector3, ray_direction: Vector3) -> float:
+    if instance.mesh == null:
+        return INF
+    var mesh: Mesh = instance.mesh
+    var local_origin: Vector3 = instance.to_local(ray_origin)
+    var local_direction: Vector3 = instance.global_transform.basis.inverse() * ray_direction
+    if local_direction.length_squared() < 0.000000001:
+        return INF
+    if instance.get_aabb().grow(0.02).intersects_ray(local_origin, local_direction) == null:
+        return INF
+    var nearest := INF
+    for s in range(mesh.get_surface_count()):
+        if mesh is ArrayMesh and mesh.surface_get_primitive_type(s) != Mesh.PRIMITIVE_TRIANGLES:
+            continue
+        var arrays: Array = mesh.surface_get_arrays(s)
+        if arrays.size() <= Mesh.ARRAY_VERTEX or arrays[Mesh.ARRAY_VERTEX] == null:
+            continue
+        var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+        var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+        var triangle_count: int = (indices.size() if not indices.is_empty() else vertices.size()) / 3
+        for t in range(triangle_count):
+            var start: int = t * 3
+            var ia: int = indices[start] if not indices.is_empty() else start
+            var ib: int = indices[start + 1] if not indices.is_empty() else start + 1
+            var ic: int = indices[start + 2] if not indices.is_empty() else start + 2
+            if ia >= vertices.size() or ib >= vertices.size() or ic >= vertices.size():
+                continue
+            var hit: Variant = Geometry3D.ray_intersects_triangle(
+                local_origin, local_direction, vertices[ia], vertices[ib], vertices[ic]
+            )
+            if hit is Vector3:
+                var world_hit: Vector3 = instance.to_global(hit)
+                var distance: float = (world_hit - ray_origin).dot(ray_direction)
+                if distance > camera.near * 0.5 and distance < nearest:
+                    nearest = distance
+    return nearest
+
 func _pick_part(position: Vector2) -> bool:
     if mesh_nodes.is_empty():
         return false
     var screen: Vector2 = _canvas_to_viewport(position)
     var ray_origin: Vector3 = camera.project_ray_origin(screen)
     var ray_direction: Vector3 = camera.project_ray_normal(screen)
-    var best_depth: float = INF
-    var best_part := -1
+    var candidates: Array = []
+    # Broad phase: AABB only rejects irrelevant meshes; never uses box depth
+    # as final picking proof. That used to select the wrong mesh when boxes
+    # overlapped around intricate cavities, wings, windows, and booster pods.
     for i in range(mesh_nodes.size()):
         var part: MeshInstance3D = mesh_nodes[i]
         if not part.visible or part.mesh == null:
             continue
-        var local_start: Vector3 = part.to_local(ray_origin)
+        var local_origin: Vector3 = part.to_local(ray_origin)
         var local_direction: Vector3 = part.global_transform.basis.inverse() * ray_direction
-        var hit: Variant = part.get_aabb().grow(0.06).intersects_ray(local_start, local_direction)
-        if hit is Vector3:
-            var hit_world: Vector3 = part.to_global(hit)
-            var depth: float = hit_world.distance_squared_to(ray_origin)
-            if depth < best_depth:
-                best_depth = depth
-                best_part = i
-    if best_part >= 0:
-        if _is_whole_model_mode():
-            _notify("WHOLE MODEL active. Switch to WHOLE PART to select individual pieces.")
-            return true
-        _choose_mesh(best_part)
+        if local_direction.length_squared() < 0.000000001:
+            continue
+        var entry: Variant = part.get_aabb().grow(0.02).intersects_ray(local_origin, local_direction)
+        if entry is Vector3:
+            var entry_depth: float = (part.to_global(entry) - ray_origin).dot(ray_direction)
+            candidates.append({"index":i, "depth": maxf(entry_depth, 0.0)})
+    if candidates.is_empty():
+        return false
+    candidates.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
+        return float(left["depth"]) < float(right["depth"]))
+    var nearest := INF
+    var selected := -1
+    for entry in candidates:
+        if float(entry["depth"]) > nearest + 0.02:
+            break
+        var index: int = entry["index"]
+        var hit_distance: float = _ray_triangle_depth(mesh_nodes[index], ray_origin, ray_direction)
+        if hit_distance < nearest:
+            nearest = hit_distance
+            selected = index
+    if selected < 0:
+        return false
+    if active_tab == 1 and _is_whole_model_mode():
+        _notify("WHOLE MODEL active. Switch to WHOLE PART to select individual pieces.")
         return true
-    return false
+    _choose_mesh(selected)
+    return true
 
 func _canvas_input(event: InputEvent) -> void:
     # Android generates both native touch and synthesized mouse events when
@@ -1810,8 +1862,12 @@ func _pointer_end() -> void:
         if active_tab == 1:
             _pick_part(pointer_origin)
         elif active_tab == 0:
-            if not _pick_vertex(pointer_origin):
-                _pick_part(pointer_origin)
+            # Prefer the frontmost triangle's owning mesh over arbitrary
+            # vertices projected through a different object's surface.
+            if _pick_part(pointer_origin):
+                _pick_vertex(pointer_origin)
+            else:
+                _pick_vertex(pointer_origin)
             _update_marker()
     if pointer_dragging_vertex:
         # The final position is committed even if drag throttling skipped a frame.
