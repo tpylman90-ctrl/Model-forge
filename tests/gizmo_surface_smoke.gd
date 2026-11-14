@@ -132,6 +132,12 @@ func _run() -> void:
     if absf(guard_editor.surfaces[0]["arrays"][Mesh.ARRAY_VERTEX][1].z) > 0.00001:
         _fail("Guarded deformation did not undo")
         return
+    guard_editor.relax_selected(0.4)
+    var smooth_point: Vector3 = guard_editor.vertex_position()
+    if smooth_point.x < 0.005 or absf(smooth_point.y) > 0.00001:
+        _fail("Crease-protected smooth mixed normals across the hard edge")
+        return
+    guard_editor.undo()
 
     print("MODEL_FORGE_GIZMO: PASS part+vertex handles, release safety, undo, section brush, guarded creases")
     app.queue_free()
