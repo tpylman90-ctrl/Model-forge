@@ -2,6 +2,7 @@ extends RefCounted
 ## Editable triangle-mesh geometry with seam-aware vertex movement and 20-step undo.
 ## v0.1 intentionally does not preserve blend shapes, LODs or skin weights.
 signal geometry_changed
+signal edit_committed
 
 var target: MeshInstance3D
 var surfaces: Array = []
@@ -214,6 +215,7 @@ func relax_selected(strength: float = 0.28) -> void:
         _redo_stack.clear()
         _rebuild()
         _refresh_weld()
+        edit_committed.emit()
 
 func end_stroke() -> void:
     if not _stroke_active:
@@ -224,6 +226,7 @@ func end_stroke() -> void:
             _undo_stack.pop_front()
         _redo_stack.clear()
         _refresh_weld()
+        edit_committed.emit()
     _stroke_before = []
     _stroke_influences.clear()
     _stroke_active = false
