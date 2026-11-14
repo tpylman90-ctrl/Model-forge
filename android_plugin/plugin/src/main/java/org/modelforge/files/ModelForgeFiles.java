@@ -2,7 +2,9 @@ package org.modelforge.files;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.database.Cursor;
 import android.net.Uri;
+import android.provider.OpenableColumns;
 import android.util.Log;
 
 import org.godotengine.godot.Godot;
@@ -128,7 +130,24 @@ public final class ModelForgeFiles extends GodotPlugin {
         if (!workDir.isDirectory() && !workDir.mkdirs()) {
             throw new IllegalStateException("Cannot create import cache");
         }
-        final File output = new File(workDir, UUID.randomUUID() + extension);
+        String displayName = "";
+        try (Cursor cursor = getContext().getContentResolver().query(
+                uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (column >= 0) displayName = cursor.getString(column);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not resolve document display name; using a safe name", e);
+        }
+        if (displayName == null) displayName = "";
+        displayName = displayName.replaceAll("[^A-Za-z0-9._ -]", "_");
+        if (displayName.length() > 90) displayName = displayName.substring(0, 90);
+        if (displayName.isBlank()) displayName = "Imported" + extension;
+        if (!"photo".equals(kind) && !displayName.toLowerCase().endsWith(".glb")) {
+            displayName += ".glb";
+        }
+        final File output = new File(workDir, UUID.randomUUID() + "_" + displayName);
         long copied = 0;
         boolean finished = false;
         try (InputStream input = getContext().getContentResolver().openInputStream(uri);
