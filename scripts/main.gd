@@ -855,12 +855,14 @@ func _save_glb(path: String, clear_dirty: bool = true) -> bool:
         return false
     # Isolate/Solo is viewport-only; always export the complete model.
     _show_all_parts()
+    _clear_selection_highlight()
     var resume_clay := clay_enabled
     if resume_clay:
         _set_clay(false)
     var document := GLTFDocument.new()
     var state := GLTFState.new()
     var problem := document.append_from_scene(asset_host, state)
+    _refresh_selection_highlight()
     if problem != OK:
         if resume_clay:
             _set_clay(true)
@@ -927,6 +929,94 @@ func _clear_asset() -> void:
     if gizmo_root != null:
         gizmo_root.visible = false
     gizmo_drag_active = false
+
+func _highlight_toggled(enabled: bool) -> void:
+    selection_highlight_enabled = enabled
+    _refresh_selection_highlight()
+    _notify("Selection highlight ON" if enabled else "Selection highlight OFF")
+
+func _clear_selection_highlight() -> void:
+    if selected_overlay_mesh != null and is_instance_valid(selected_overlay_mesh):
+        selected_overlay_mesh.material_overlay = selected_original_overlay
+    selected_overlay_mesh = null
+    selected_original_overlay = null
+    if selection_outline != null:
+        selection_outline.visible = false
+        selection_outline.mesh = null
+
+func _part_world_bounds(parts: Array) -> AABB:
+    var result := AABB()
+    var first := true
+    for instance in parts:
+        if not is_instance_valid(instance) or instance.mesh == null:
+            continue
+        var box: AABB = instance.get_aabb()
+        for x in [0.0, 1.0]:
+            for y in [0.0, 1.0]:
+                for z in [0.0, 1.0]:
+                    var point: Vector3 = instance.to_global(box.position + box.size * Vector3(x, y, z))
+                    if first:
+                        result = AABB(point, Vector3.ZERO)
+                        first = false
+                    else:
+                        result = result.expand(point)
+    return result
+
+func _is_whole_model_mode() -> bool:
+    return move_target_picker != null and move_target_picker.selected == 2
+
+func _refresh_selection_highlight() -> void:
+    if not selection_highlight_enabled or edit.target == null or selection_outline == null:
+        _clear_selection_highlight()
+        return
+    var whole_model := _is_whole_model_mode()
+    var intended: MeshInstance3D = null if whole_model else edit.target
+    if selected_overlay_mesh != intended:
+        if selected_overlay_mesh != null and is_instance_valid(selected_overlay_mesh):
+            selected_overlay_mesh.material_overlay = selected_original_overlay
+        selected_overlay_mesh = null
+        selected_original_overlay = null
+        if intended != null:
+            selected_original_overlay = intended.material_overlay
+            selected_overlay_mesh = intended
+            intended.material_overlay = selection_overlay_material
+    _update_selection_outline()
+
+func _update_selection_outline() -> void:
+    if selection_outline == null or not selection_highlight_enabled or edit.target == null:
+        if selection_outline != null:
+            selection_outline.visible = false
+        return
+    var targets: Array = mesh_nodes if _is_whole_model_mode() else [edit.target]
+    if targets.is_empty():
+        selection_outline.visible = false
+        return
+    var bounds: AABB = _part_world_bounds(targets)
+    var margin := maxf(0.012, bounds.size.length() * 0.008)
+    bounds = bounds.grow(margin)
+    var lo: Vector3 = bounds.position
+    var hi: Vector3 = bounds.end
+    var corners := [
+        Vector3(lo.x, lo.y, lo.z), Vector3(hi.x, lo.y, lo.z),
+        Vector3(hi.x, hi.y, lo.z), Vector3(lo.x, hi.y, lo.z),
+        Vector3(lo.x, lo.y, hi.z), Vector3(hi.x, lo.y, hi.z),
+        Vector3(hi.x, hi.y, hi.z), Vector3(lo.x, hi.y, hi.z)
+    ]
+    var pairs := [
+        0,1, 1,2, 2,3, 3,0, 4,5, 5,6, 6,7, 7,4,
+        0,4, 1,5, 2,6, 3,7
+    ]
+    var lines := PackedVector3Array()
+    for index in pairs:
+        lines.append(corners[index])
+    var arrays: Array = []
+    arrays.resize(Mesh.ARRAY_MAX)
+    arrays[Mesh.ARRAY_VERTEX] = lines
+    var outline := ArrayMesh.new()
+    outline.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
+    selection_outline.mesh = outline
+    selection_outline.global_transform = Transform3D.IDENTITY
+    selection_outline.visible = true
 
 func _index_meshes() -> void:
     mesh_nodes.clear()
@@ -1040,8 +1130,11 @@ func _mark_clean() -> void:
 func _update_project_header() -> void:
     if project_label != null:
         project_label.text = ("%s%s" % [project_name, " • UNSAVED" if dirty else " • SAVED"])
-    if part_info_label != null and edit.target != null:
-        part_info_label.text = "%s" % edit.target.name
+    if part_info_label != null:
+        if _is_whole_model_mode():
+            part_info_label.text = "ALL %d PARTS" % mesh_nodes.size()
+        elif edit.target != null:
+            part_info_label.text = "%d/%d • %s" % [selected_mesh_index + 1, mesh_nodes.size(), edit.target.name]
 
 func _selected_part() -> MeshInstance3D:
     return edit.target if edit != null else null
@@ -1199,6 +1292,7 @@ func _geometry_changed() -> void:
         if wire_preview.visible:
             _rebuild_wire_overlay()
     _update_marker()
+    _update_selection_outline()
 
 func _rebuild_wire_overlay() -> void:
     if edit.target == null:
