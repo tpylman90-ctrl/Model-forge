@@ -66,6 +66,9 @@ jobs:
       - name: Check SAF plugin callbacks in GDScript
         shell: bash
         run: godot --headless --path . --script res://tests/saf_smoke.gd
+      - name: Validate full editing workflow on demo GLB
+        shell: bash
+        run: godot --headless --path . --script res://tests/workflow_smoke.gd
       - name: Prepare debug signing
         shell: bash
         run: |
