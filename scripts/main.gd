@@ -623,6 +623,24 @@ func _create_scene() -> void:
     wire_preview.material_override = wiremat
     wire_preview.visible = false
     helpers.add_child(wire_preview)
+    # Non-exportable amber selection cue: transparent surface tint and world-space outline.
+    selection_overlay_material = StandardMaterial3D.new()
+    selection_overlay_material.albedo_color = Color(1.0, 0.63, 0.16, 0.26)
+    selection_overlay_material.emission_enabled = true
+    selection_overlay_material.emission = Color("#ffaf41")
+    selection_overlay_material.emission_energy_multiplier = 0.22
+    selection_overlay_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    selection_overlay_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+    selection_overlay_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    selection_outline = MeshInstance3D.new()
+    selection_outline.name = "SelectedPartOutline"
+    var edge_material := StandardMaterial3D.new()
+    edge_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    edge_material.albedo_color = Color("#ffbd52")
+    edge_material.no_depth_test = true
+    selection_outline.material_override = edge_material
+    selection_outline.visible = false
+    helpers.add_child(selection_outline)
     gizmo_root = AxisGizmo.new()
     helpers.add_child(gizmo_root)
     _update_camera()
@@ -887,6 +905,7 @@ func _load_reference(path: String) -> void:
     _notify("Reference image loaded. HIDE closes the photo.")
 
 func _clear_asset() -> void:
+    _clear_selection_highlight()
     _show_all_parts()
     _set_clay(false)
     edit.set_target(null)
@@ -898,7 +917,11 @@ func _clear_asset() -> void:
         asset_host.remove_child(child)
         child.queue_free()
     mesh_nodes.clear()
+    selected_mesh_index = -1
+    filtered_mesh_indices.clear()
     mesh_picker.clear()
+    if part_search != null:
+        part_search.text = ""
     marker.visible = false
     wire_preview.mesh = null
     if gizmo_root != null:
@@ -907,14 +930,14 @@ func _clear_asset() -> void:
 
 func _index_meshes() -> void:
     mesh_nodes.clear()
-    mesh_picker.clear()
+    selected_mesh_index = -1
     _collect_mesh_nodes(asset_host)
-    for instance in mesh_nodes:
-        mesh_picker.add_item(instance.name)
+    _refresh_part_picker()
     if not mesh_nodes.is_empty():
         _choose_mesh(0)
     else:
         vertex_label.text = "No editable triangle meshes"
+        _clear_selection_highlight()
 
 func _collect_mesh_nodes(node: Node) -> void:
     if node is MeshInstance3D and node.mesh != null:
@@ -922,11 +945,45 @@ func _collect_mesh_nodes(node: Node) -> void:
     for child in node.get_children():
         _collect_mesh_nodes(child)
 
+func _refresh_part_picker() -> void:
+    if mesh_picker == null:
+        return
+    mesh_picker.clear()
+    filtered_mesh_indices.clear()
+    var query: String = part_search.text.strip_edges().to_lower() if part_search != null else ""
+    for index in range(mesh_nodes.size()):
+        var node: MeshInstance3D = mesh_nodes[index]
+        if query.is_empty() or query in node.name.to_lower() or query in str(index + 1):
+            filtered_mesh_indices.append(index)
+            mesh_picker.add_item("%d / %d • %s" % [index + 1, mesh_nodes.size(), node.name])
+    if filtered_mesh_indices.is_empty():
+        mesh_picker.add_item("No matching parts")
+        mesh_picker.set_item_disabled(0, true)
+    else:
+        var found: int = filtered_mesh_indices.find(selected_mesh_index)
+        mesh_picker.select(found if found >= 0 else 0)
+
+func _choose_filtered_mesh(visible_index: int) -> void:
+    if visible_index >= 0 and visible_index < filtered_mesh_indices.size():
+        _choose_mesh(filtered_mesh_indices[visible_index])
+
+func _part_search_changed(_query: String) -> void:
+    _refresh_part_picker()
+    if filtered_mesh_indices.is_empty():
+        _notify("No matching mesh part. Clear Find part to see them all.")
+        return
+    if not filtered_mesh_indices.has(selected_mesh_index):
+        _choose_mesh(filtered_mesh_indices[0])
+
 func _choose_mesh(index: int) -> void:
     if index < 0 or index >= mesh_nodes.size():
         return
+    _clear_selection_highlight()
     var instance: MeshInstance3D = mesh_nodes[index]
-    mesh_picker.select(index)
+    selected_mesh_index = index
+    var shown_index: int = filtered_mesh_indices.find(index)
+    if shown_index >= 0:
+        mesh_picker.select(shown_index)
     if editor_by_mesh.has(instance):
         edit = editor_by_mesh[instance]
     else:
@@ -948,15 +1005,19 @@ func _choose_mesh(index: int) -> void:
     edit.soft_radius = float(soft_radius_slider.value)
     edit.soft_profile = surface_profile_picker.selected
     edit.section_axis = section_axis_picker.selected
+    _refresh_selection_highlight()
     _geometry_changed()
     _update_project_header()
-    _notify("Part %d/%d: %s • %d vertices" % [index + 1, mesh_nodes.size(), instance.name, edit.vertex_count()])
+    _notify("SELECTED %d/%d: %s • %d vertices" % [index + 1, mesh_nodes.size(), instance.name, edit.vertex_count()])
 
 func _cycle_part(direction: int) -> void:
     if mesh_nodes.is_empty():
         return
-    var at: int = mesh_picker.selected
-    _choose_mesh(posmod(at + direction, mesh_nodes.size()))
+    if not filtered_mesh_indices.is_empty():
+        var current: int = filtered_mesh_indices.find(selected_mesh_index)
+        _choose_mesh(filtered_mesh_indices[posmod(current + direction, filtered_mesh_indices.size())])
+    else:
+        _choose_mesh(posmod(selected_mesh_index + direction, mesh_nodes.size()))
 
 func _record_geometry_commit(source: RefCounted) -> void:
     _push_history({"kind": "geometry", "node": source.target})
