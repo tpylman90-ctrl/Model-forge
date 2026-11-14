@@ -18,6 +18,10 @@ var part_info_label: Label
 var mirror_toggle: CheckButton
 var soft_toggle: CheckButton
 var grid_node: MeshInstance3D
+var clay_toggle: CheckButton
+var clay_enabled: bool = false
+var previous_overrides: Dictionary = {}
+var clay_material: StandardMaterial3D
 var isolate_active: bool = false
 var saved_visibility: Dictionary = {}
 const DRAFT_PATH := "user://model-forge-working-draft.glb"
@@ -254,7 +258,8 @@ func _create_ui() -> void:
     # View: preset cameras, wireframe inspection and orbit-only mode.
     var views := HBoxContainer.new()
     tool_panels[2].add_child(views)
-    _button(views, "FIT", _frame_model)
+    _button(views, "FIT ALL", _frame_model)
+    _button(views, "FOCUS PART", _focus_part)
     _button(views, "FRONT", func(): _preset_view(0))
     _button(views, "SIDE", func(): _preset_view(1))
     _button(views, "TOP", func(): _preset_view(2))
@@ -265,6 +270,10 @@ func _create_ui() -> void:
     wire_toggle.text = "WIREFRAME"
     wire_toggle.toggled.connect(_wire_changed)
     view_row.add_child(wire_toggle)
+    clay_toggle = CheckButton.new()
+    clay_toggle.text = "CLAY"
+    clay_toggle.toggled.connect(_set_clay)
+    view_row.add_child(clay_toggle)
     _button(view_row, "SOLO PART", _toggle_isolate)
     _button(view_row, "SHOW ALL", _show_all_parts)
     _button(view_row, "PHOTO", _toggle_reference)
@@ -363,6 +372,52 @@ func _smooth_selection() -> void:
         return
     edit.relax_selected(0.28)
     _notify("Smoothed selection — tap UNDO if needed.")
+
+func _focus_part() -> void:
+    var instance := _selected_part()
+    if instance == null:
+        _notify("Choose a part to focus on.")
+        return
+    var bounds: AABB = instance.get_aabb()
+    var world_bounds: AABB = AABB()
+    var first := true
+    for x in [0.0, 1.0]:
+        for y in [0.0, 1.0]:
+            for z in [0.0, 1.0]:
+                var point: Vector3 = instance.to_global(bounds.position + bounds.size * Vector3(x, y, z))
+                if first:
+                    world_bounds = AABB(point, Vector3.ZERO)
+                    first = false
+                else:
+                    world_bounds = world_bounds.expand(point)
+    orbit_center = world_bounds.get_center()
+    orbit_distance = clampf(world_bounds.size.length() * 1.65, 0.6, 900.0)
+    _update_camera()
+    _update_marker()
+    _notify("Focused on part: %s" % instance.name)
+
+func _set_clay(enabled: bool) -> void:
+    if clay_enabled == enabled:
+        return
+    if enabled:
+        clay_material = StandardMaterial3D.new()
+        clay_material.albedo_color = Color("#b8c2cf")
+        clay_material.roughness = 0.32
+        clay_material.metallic = 0.15
+        previous_overrides.clear()
+        for instance in mesh_nodes:
+            previous_overrides[instance] = instance.material_override
+            instance.material_override = clay_material
+    else:
+        for instance in previous_overrides:
+            if is_instance_valid(instance):
+                instance.material_override = previous_overrides[instance]
+        previous_overrides.clear()
+    clay_enabled = enabled
+    if clay_toggle != null:
+        clay_toggle.set_pressed_no_signal(enabled)
+    if status_label != null:
+        _notify("Clay preview: material colors temporarily hidden." if enabled else "Original materials restored.")
 
 func _preset_view(preset: int) -> void:
     match preset:
@@ -694,13 +749,20 @@ func _save_glb(path: String, clear_dirty: bool = true) -> bool:
         return false
     # Isolate/Solo is viewport-only; always export the complete model.
     _show_all_parts()
+    var resume_clay := clay_enabled
+    if resume_clay:
+        _set_clay(false)
     var document := GLTFDocument.new()
     var state := GLTFState.new()
     var problem := document.append_from_scene(asset_host, state)
     if problem != OK:
+        if resume_clay:
+            _set_clay(true)
         _notify("Export error: %s" % error_string(problem))
         return false
     var bytes := document.generate_buffer(state)
+    if resume_clay:
+        _set_clay(true)
     if bytes.is_empty():
         _notify("Export failed: generated GLB is empty.")
         return false
@@ -738,6 +800,7 @@ func _load_reference(path: String) -> void:
 
 func _clear_asset() -> void:
     _show_all_parts()
+    _set_clay(false)
     edit.set_target(null)
     editor_by_mesh.clear()
     undo_history.clear()
