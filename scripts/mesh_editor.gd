@@ -11,6 +11,10 @@ var selected_vertex: int = -1
 var mirror_enabled: bool = false
 var soft_enabled: bool = false
 var soft_radius: float = 0.75
+# 0 = radial falloff, 1 = station/section band, 2 = radial with hard-normal guard.
+var soft_profile: int = 0
+var section_axis: int = 2
+var guard_angle_degrees: float = 35.0
 
 
 var _weld: Array = []
@@ -112,12 +116,36 @@ func _falloff(distance: float) -> float:
     var t: float = clampf(1.0 - distance / maxf(soft_radius, 0.0001), 0.0, 1.0)
     return t * t * (3.0 - 2.0 * t)
 
+func _section_coordinate(point: Vector3) -> float:
+    match section_axis:
+        0:
+            return point.x
+        1:
+            return point.y
+        _:
+            return point.z
+
+func _passes_hard_normal_guard(surface_index: int, index: int, reference: Vector3) -> bool:
+    var arr: Array = surfaces[surface_index]["arrays"]
+    var normals: PackedVector3Array = arr[Mesh.ARRAY_NORMAL] if arr[Mesh.ARRAY_NORMAL] != null else PackedVector3Array()
+    if normals.size() <= index:
+        return true
+    var candidate: Vector3 = normals[index]
+    if candidate.length_squared() < 0.5 or reference.length_squared() < 0.5:
+        return true
+    return candidate.normalized().dot(reference.normalized()) >= cos(deg_to_rad(guard_angle_degrees))
+
 func _build_influences(snapshot: Array) -> Array:
     var result: Array = []
     if not has_selection():
         return result
     var center: Vector3 = snapshot[selected_surface][selected_vertex]
     var reflected := Vector3(-center.x, center.y, center.z)
+    var source_array: Array = surfaces[selected_surface]["arrays"]
+    var source_normals: PackedVector3Array = source_array[Mesh.ARRAY_NORMAL] if source_array[Mesh.ARRAY_NORMAL] != null else PackedVector3Array()
+    var reference_normal := Vector3.ZERO
+    if source_normals.size() > selected_vertex:
+        reference_normal = source_normals[selected_vertex]
     for s in range(snapshot.size()):
         var vertices: PackedVector3Array = snapshot[s]
         for i in range(vertices.size()):
@@ -129,9 +157,19 @@ func _build_influences(snapshot: Array) -> Array:
                 distance = pos.distance_to(reflected)
                 mirrored = true
             var weight := 0.0
+            var welded: bool = distance * distance <= WELD_EPSILON_SQUARED
             if soft_enabled:
+                if soft_profile == 1:
+                    var station_center: float = _section_coordinate(reflected if mirrored else center)
+                    distance = absf(_section_coordinate(pos) - station_center)
                 weight = _falloff(distance)
-            elif distance * distance <= WELD_EPSILON_SQUARED:
+                if soft_profile == 2 and not welded:
+                    if not _passes_hard_normal_guard(s, i, reference_normal):
+                        weight = 0.0
+            elif welded:
+                weight = 1.0
+            # Keep UV seam duplicates together regardless of their normal orientation.
+            if welded:
                 weight = 1.0
             if weight <= 0.0:
                 continue
