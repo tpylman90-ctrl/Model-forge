@@ -387,7 +387,7 @@ func _show_tab(index: int) -> void:
     if status_label != null:
         var messages := [
             "SHAPE • Choose a part; tap a point; enable EDIT POINTS to drag.",
-            "MOVE • Choose WHOLE PART or SELECTED POINT; use X/Y/Z buttons.",
+            "MOVE • Highlighted selection, or WHOLE MODEL to transform all parts.",
             "VIEW • Camera angles, wireframe, part isolation and reference photo.",
             "FILES • Open, export, save/restore a draft, load a reference image."
         ]
@@ -411,14 +411,28 @@ func _update_touch_hint() -> void:
     elif active_tab == 0:
         touch_hint.text = "SHAPE • Tap a point to select • EDIT POINTS ON to reshape • Drag to orbit while OFF"
     elif active_tab == 1:
-        touch_hint.text = "MOVE • Tap any part to select • Drag RED X / GREEN Y / BLUE Z handle"
+        if _is_whole_model_mode():
+            touch_hint.text = "WHOLE MODEL • All parts together • Drag RED X / GREEN Y / BLUE Z"
+        else:
+            touch_hint.text = "MOVE • Amber highlighted part • Tap part to select • Drag XYZ handle"
     else:
         touch_hint.text = "VIEW • Drag to rotate • Two fingers to zoom / pan"
 
 
 func _move_target_changed(index: int) -> void:
-    _notify("Moving whole part" if index == 1 else "Moving selected mesh point")
+    if gizmo_drag_active:
+        _finish_gizmo_drag()
+        pointer_down = false
+    _refresh_selection_highlight()
+    _update_project_header()
     _update_marker()
+    _update_touch_hint()
+    var hints := [
+        "SELECTED POINT: drag gizmo to change mesh geometry.",
+        "WHOLE PART: drag gizmo or rotate/scale one component.",
+        "WHOLE MODEL: move, rotate or scale all %d parts together." % mesh_nodes.size()
+    ]
+    _notify(hints[index])
 
 func _wire_changed(enabled: bool) -> void:
     if wire_preview != null:
@@ -1139,6 +1153,68 @@ func _update_project_header() -> void:
 func _selected_part() -> MeshInstance3D:
     return edit.target if edit != null else null
 
+func _capture_model_roots() -> Array:
+    # Imported GLB is normally one top-level scene root. This also handles
+    # multiple top-level roots without flattening or damaging per-part hierarchy.
+    var snapshots: Array = []
+    for child in asset_host.get_children():
+        if child is Node3D:
+            snapshots.append({"node": child, "transform": child.transform})
+    return snapshots
+
+func _set_model_roots(snapshot: Array) -> void:
+    for item in snapshot:
+        var node: Node3D = item["node"]
+        if is_instance_valid(node):
+            node.transform = item["transform"]
+
+func _apply_model_affine(snapshot: Array, affine: Transform3D) -> void:
+    for item in snapshot:
+        var node: Node3D = item["node"]
+        if is_instance_valid(node):
+            node.transform = affine * item["transform"]
+
+func _commit_model_edit(before: Array) -> bool:
+    var after: Array = _capture_model_roots()
+    var changed := false
+    for i in range(mini(before.size(), after.size())):
+        var old_transform: Transform3D = before[i]["transform"]
+        var new_transform: Transform3D = after[i]["transform"]
+        if not old_transform.is_equal_approx(new_transform):
+            changed = true
+            break
+    if changed:
+        _push_history({"kind": "model", "before": before, "after": after})
+        _mark_dirty()
+    _geometry_changed()
+    return changed
+
+func _whole_model_affine(kind: String, parameter: Variant) -> void:
+    if mesh_nodes.is_empty():
+        _notify("Open a model first.")
+        return
+    var before: Array = _capture_model_roots()
+    if before.is_empty():
+        return
+    var pivot_world: Vector3 = _part_world_bounds(mesh_nodes).get_center()
+    var pivot: Vector3 = asset_host.to_local(pivot_world)
+    var affine := Transform3D.IDENTITY
+    if kind == "move":
+        var delta_world: Vector3 = parameter
+        affine.origin = asset_host.global_transform.basis.inverse() * delta_world
+    elif kind == "rotate":
+        var rotate := Transform3D(Basis(Vector3.UP, deg_to_rad(float(parameter))), Vector3.ZERO)
+        affine = Transform3D(Basis.IDENTITY, pivot) * rotate * Transform3D(Basis.IDENTITY, -pivot)
+    elif kind == "scale":
+        var factor: float = float(parameter)
+        var scaling := Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * factor), Vector3.ZERO)
+        affine = Transform3D(Basis.IDENTITY, pivot) * scaling * Transform3D(Basis.IDENTITY, -pivot)
+    else:
+        return
+    _apply_model_affine(before, affine)
+    if _commit_model_edit(before):
+        _notify("WHOLE MODEL %s • %d parts moved as one assembly." % [kind, mesh_nodes.size()])
+
 func _part_transform(direction: Vector3) -> void:
     var node := _selected_part()
     if node == null:
@@ -1152,6 +1228,9 @@ func _part_transform(direction: Vector3) -> void:
     _notify("Moved part %s by %.3f" % [node.name, float(step_box.value)])
 
 func _rotate_part(degrees: float) -> void:
+    if _is_whole_model_mode():
+        _whole_model_affine("rotate", degrees)
+        return
     var node := _selected_part()
     if node == null:
         return
@@ -1163,6 +1242,9 @@ func _rotate_part(degrees: float) -> void:
     _notify("Rotated %s by %.1f degrees" % [node.name, degrees])
 
 func _scale_part(factor: float) -> void:
+    if _is_whole_model_mode():
+        _whole_model_affine("scale", factor)
+        return
     var node := _selected_part()
     if node == null:
         return
@@ -1234,6 +1316,9 @@ func _cycle_vertex(direction: int) -> void:
         _update_marker()
 
 func _nudge(direction: Vector3) -> void:
+    if _is_whole_model_mode():
+        _whole_model_affine("move", direction * float(step_box.value))
+        return
     if move_target_picker != null and move_target_picker.selected == 1:
         _part_transform(direction)
         return
@@ -1249,15 +1334,18 @@ func _do_undo() -> void:
         return
     var operation: Dictionary = undo_history.pop_back()
     redo_history.append(operation)
-    var node: MeshInstance3D = operation["node"]
-    if not is_instance_valid(node):
-        _notify("Undo target is no longer available.")
-        return
-    if operation["kind"] == "geometry":
-        _select_part_node(node)
-        edit.undo()
-    elif operation["kind"] == "part":
-        node.transform = operation["before"]
+    if operation["kind"] == "model":
+        _set_model_roots(operation["before"])
+    else:
+        var node: MeshInstance3D = operation["node"]
+        if not is_instance_valid(node):
+            _notify("Undo target is no longer available.")
+            return
+        if operation["kind"] == "geometry":
+            _select_part_node(node)
+            edit.undo()
+        elif operation["kind"] == "part":
+            node.transform = operation["before"]
     _geometry_changed()
     _mark_dirty()
     _notify("Undid last edit.")
@@ -1268,15 +1356,18 @@ func _do_redo() -> void:
         return
     var operation: Dictionary = redo_history.pop_back()
     undo_history.append(operation)
-    var node: MeshInstance3D = operation["node"]
-    if not is_instance_valid(node):
-        _notify("Redo target is no longer available.")
-        return
-    if operation["kind"] == "geometry":
-        _select_part_node(node)
-        edit.redo()
-    elif operation["kind"] == "part":
-        node.transform = operation["after"]
+    if operation["kind"] == "model":
+        _set_model_roots(operation["after"])
+    else:
+        var node: MeshInstance3D = operation["node"]
+        if not is_instance_valid(node):
+            _notify("Redo target is no longer available.")
+            return
+        if operation["kind"] == "geometry":
+            _select_part_node(node)
+            edit.redo()
+        elif operation["kind"] == "part":
+            node.transform = operation["after"]
     _geometry_changed()
     _mark_dirty()
     _notify("Redid last edit.")
@@ -1388,7 +1479,9 @@ func _update_gizmo() -> void:
         return
     var node: MeshInstance3D = edit.target
     var pivot: Vector3
-    if move_target_picker != null and move_target_picker.selected == 0:
+    if _is_whole_model_mode():
+        pivot = _part_world_bounds(mesh_nodes).get_center()
+    elif move_target_picker != null and move_target_picker.selected == 0:
         if not edit.has_selection():
             gizmo_root.visible = false
             return
@@ -1407,8 +1500,12 @@ func _pick_gizmo_axis(position: Vector2) -> int:
 func _begin_gizmo_drag(axis: int, position: Vector2) -> bool:
     if axis < 0 or axis > 2 or edit.target == null:
         return false
+    gizmo_drag_model = _is_whole_model_mode()
     gizmo_drag_part = move_target_picker.selected == 1
-    if not gizmo_drag_part and not edit.begin_stroke():
+    gizmo_model_before = _capture_model_roots() if gizmo_drag_model else []
+    if gizmo_drag_model and gizmo_model_before.is_empty():
+        return false
+    if not gizmo_drag_part and not gizmo_drag_model and not edit.begin_stroke():
         return false
     gizmo_axis = axis
     gizmo_drag_active = true
@@ -1421,7 +1518,8 @@ func _begin_gizmo_drag(axis: int, position: Vector2) -> bool:
     gizmo_drag_axis_screen = camera.unproject_position(gizmo_root.tip_world(axis)) - camera.unproject_position(gizmo_start_world)
     gizmo_drag_px_length = gizmo_drag_axis_screen.length_squared()
     gizmo_drag_vertex_editor = edit
-    _notify("Drag the %s handle to move %s." % [["X (red)", "Y (green)", "Z (blue)"][axis], "part" if gizmo_drag_part else "point"])
+    var mode_label := "whole model" if gizmo_drag_model else ("part" if gizmo_drag_part else "point")
+    _notify("Drag the %s handle to move %s." % [["X (red)", "Y (green)", "Z (blue)"][axis], mode_label])
     return true
 
 func _gizmo_delta_for_position(position: Vector2) -> Vector3:
@@ -1450,7 +1548,11 @@ func _apply_gizmo_drag(position: Vector2, force: bool = false) -> void:
         return
     gizmo_last_world_delta = delta
     gizmo_drag_changed = delta.length_squared() > 0.00000001
-    if gizmo_drag_part:
+    if gizmo_drag_model:
+        var affine := Transform3D(Basis.IDENTITY, asset_host.global_transform.basis.inverse() * delta)
+        _apply_model_affine(gizmo_model_before, affine)
+        _geometry_changed()
+    elif gizmo_drag_part:
         var parent: Node3D = edit.target.get_parent() as Node3D
         if parent == null:
             return
@@ -1465,7 +1567,9 @@ func _apply_gizmo_drag(position: Vector2, force: bool = false) -> void:
 func _finish_gizmo_drag() -> void:
     if not gizmo_drag_active:
         return
-    if gizmo_drag_part:
+    if gizmo_drag_model:
+        _commit_model_edit(gizmo_model_before)
+    elif gizmo_drag_part:
         var node: MeshInstance3D = edit.target
         if node != null and not node.transform.is_equal_approx(gizmo_start_transform):
             _push_history({"kind":"part", "node":node, "before":gizmo_start_transform, "after":node.transform})
@@ -1473,6 +1577,8 @@ func _finish_gizmo_drag() -> void:
     elif gizmo_drag_vertex_editor != null:
         gizmo_drag_vertex_editor.end_stroke()
     gizmo_drag_active = false
+    gizmo_drag_model = false
+    gizmo_model_before.clear()
     gizmo_drag_part = false
     gizmo_axis = -1
     gizmo_drag_vertex_editor = null
@@ -1500,6 +1606,9 @@ func _pick_part(position: Vector2) -> bool:
                 best_depth = depth
                 best_part = i
     if best_part >= 0:
+        if _is_whole_model_mode():
+            _notify("WHOLE MODEL active. Switch to WHOLE PART to select individual pieces.")
+            return true
         _choose_mesh(best_part)
         return true
     return false
