@@ -164,7 +164,10 @@ func _build_influences(snapshot: Array) -> Array:
                     distance = absf(_section_coordinate(pos) - station_center)
                 weight = _falloff(distance)
                 if soft_profile == 2 and not welded:
-                    if not _passes_hard_normal_guard(s, i, reference_normal):
+                    var guard_normal: Vector3 = reference_normal
+                    if mirrored:
+                        guard_normal.x = -guard_normal.x
+                    if not _passes_hard_normal_guard(s, i, guard_normal):
                         weight = 0.0
             elif welded:
                 weight = 1.0
