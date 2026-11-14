@@ -91,13 +91,17 @@ func _create_ui() -> void:
     toolbar.add_theme_constant_override("separation", 8)
     header.add_child(toolbar)
     var brand := _label(toolbar, "MODEL FORGE", 22, ACCENT)
-    brand.custom_minimum_size.x = 195
-    open_button = _button(toolbar, "OPEN GLB", _request_open_glb)
-    open_button.custom_minimum_size.x = 192
-    _button(toolbar, "SAVE GLB", _request_save_glb)
+    brand.custom_minimum_size.x = 198
+    project_label = _label(toolbar, "Untitled • SAVED", 14, MUTED)
+    project_label.custom_minimum_size.x = 220
+    project_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    project_label.clip_text = true
+    open_button = _button(toolbar, "OPEN", _request_open_glb)
+    open_button.custom_minimum_size.x = 145
+    _button(toolbar, "EXPORT GLB", _request_save_glb)
     _button(toolbar, "UNDO", _do_undo)
     _button(toolbar, "REDO", _do_redo)
-    _button(toolbar, "HELP", _show_help)
+    _button(toolbar, "?", _show_help)
 
     var viewport_area := Control.new()
     viewport_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -143,12 +147,12 @@ func _create_ui() -> void:
     var tabs := HBoxContainer.new()
     tabs.add_theme_constant_override("separation", 8)
     stack.add_child(tabs)
-    for tab_name in ["SHAPE", "MOVE", "VIEW", "MORE"]:
+    for tab_name in ["SHAPE", "MOVE", "VIEW", "FILES"]:
         var index: int = tab_buttons.size()
         var tab := _button(tabs, tab_name, func(): _show_tab(index))
         tab_buttons.append(tab)
     var pages := Control.new()
-    pages.custom_minimum_size.y = 132
+    pages.custom_minimum_size.y = 148
     stack.add_child(pages)
     for i in range(4):
         var page := VBoxContainer.new()
@@ -166,10 +170,12 @@ func _create_ui() -> void:
     mesh_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     mesh_picker.item_selected.connect(_choose_mesh)
     shape_row.add_child(mesh_picker)
+    _button(shape_row, "◀ PART", func(): _cycle_part(-1))
+    _button(shape_row, "PART ▶", func(): _cycle_part(1))
     _button(shape_row, "◀ POINT", func(): _cycle_vertex(-1))
     _button(shape_row, "POINT ▶", func(): _cycle_vertex(1))
     vertex_label = _label(shape_row, "No point", 15, Color.WHITE)
-    vertex_label.custom_minimum_size.x = 255
+    vertex_label.custom_minimum_size.x = 198
     var shape_options := HBoxContainer.new()
     shape_options.add_theme_constant_override("separation", 12)
     tool_panels[0].add_child(shape_options)
@@ -179,14 +185,14 @@ func _create_ui() -> void:
     edit_toggle.toggled.connect(_edit_toggled)
     edit_toggle.custom_minimum_size.x = 195
     shape_options.add_child(edit_toggle)
-    var mirror := CheckButton.new()
-    mirror.text = "MIRROR"
-    mirror.toggled.connect(func(enabled: bool): edit.mirror_enabled = enabled)
-    shape_options.add_child(mirror)
-    var soft := CheckButton.new()
-    soft.text = "SOFT"
-    soft.toggled.connect(_soft_changed)
-    shape_options.add_child(soft)
+    mirror_toggle = CheckButton.new()
+    mirror_toggle.text = "MIRROR X"
+    mirror_toggle.toggled.connect(func(enabled: bool): edit.mirror_enabled = enabled)
+    shape_options.add_child(mirror_toggle)
+    soft_toggle = CheckButton.new()
+    soft_toggle.text = "SOFT SHAPE"
+    soft_toggle.toggled.connect(_soft_changed)
+    shape_options.add_child(soft_toggle)
     soft_radius_label = _label(shape_options, "Radius 0.75", 16, MUTED)
     soft_radius_slider = HSlider.new()
     soft_radius_slider.custom_minimum_size.x = 180
@@ -200,7 +206,23 @@ func _create_ui() -> void:
     shape_options.add_child(soft_radius_slider)
     _button(shape_options, "SMOOTH", _smooth_selection)
 
-    # Move: six large, predictable precision controls.
+    # Move: explicitly choose whole-part placement or point adjustments.
+    var target_row := HBoxContainer.new()
+    tool_panels[1].add_child(target_row)
+    _label(target_row, "EDIT", 17, ACCENT)
+    move_target_picker = OptionButton.new()
+    move_target_picker.custom_minimum_size = Vector2(275, 52)
+    move_target_picker.add_item("SELECTED POINT")
+    move_target_picker.add_item("WHOLE PART")
+    move_target_picker.select(1)
+    move_target_picker.item_selected.connect(_move_target_changed)
+    target_row.add_child(move_target_picker)
+    part_info_label = _label(target_row, "Hull", 16, Color.WHITE)
+    part_info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _button(target_row, "ROTATE −5°", func(): _rotate_part(-5.0))
+    _button(target_row, "ROTATE +5°", func(): _rotate_part(5.0))
+    _button(target_row, "SMALLER", func(): _scale_part(0.95))
+    _button(target_row, "BIGGER", func(): _scale_part(1.05))
     var move_row := HBoxContainer.new()
     tool_panels[1].add_child(move_row)
     for item in [
@@ -227,7 +249,7 @@ func _create_ui() -> void:
     for axis in ["SCREEN", "X AXIS", "Y AXIS", "Z AXIS"]:
         axis_picker.add_item(axis)
     move_settings.add_child(axis_picker)
-    _label(move_settings, "Tap SHAPE to select another point.", 16, MUTED)
+    _label(move_settings, "PART = entire component   •   POINT = mesh geometry", 15, MUTED)
 
     # View: preset cameras, wireframe inspection and orbit-only mode.
     var views := HBoxContainer.new()
@@ -241,25 +263,29 @@ func _create_ui() -> void:
     tool_panels[2].add_child(view_row)
     wire_toggle = CheckButton.new()
     wire_toggle.text = "WIREFRAME"
-    wire_toggle.toggled.connect(func(enabled: bool):
-        if wire_preview != null:
-            wire_preview.visible = enabled
-    )
+    wire_toggle.toggled.connect(_wire_changed)
     view_row.add_child(wire_toggle)
-    _button(view_row, "CAMERA ONLY", _camera_mode)
-    _button(view_row, "REBUILD NORMALS", _recalculate_normals)
-    _label(view_row, "Drag to orbit. Two fingers pan or zoom.", 16, MUTED)
+    _button(view_row, "SOLO PART", _toggle_isolate)
+    _button(view_row, "SHOW ALL", _show_all_parts)
+    _button(view_row, "PHOTO", _toggle_reference)
+    _button(view_row, "NORMALS", _recalculate_normals)
+    _label(view_row, "Drag = rotate • pinch = zoom • two-finger drag = pan", 15, MUTED)
 
-    # More: keep advanced/less frequent actions out of the main work area.
+    # Files: clear separation between a private working draft and exported GLB.
+    var file_row := HBoxContainer.new()
+    tool_panels[3].add_child(file_row)
+    _button(file_row, "OPEN GLB", _request_open_glb)
+    _button(file_row, "EXPORT GLB", _request_save_glb)
+    _button(file_row, "SAVE DRAFT", _save_draft)
+    _button(file_row, "RESTORE DRAFT", _restore_draft)
     var more_buttons := HBoxContainer.new()
     tool_panels[3].add_child(more_buttons)
-    _button(more_buttons, "OPEN GLB", _request_open_glb)
     _button(more_buttons, "LOAD PHOTO", _request_reference)
-    _button(more_buttons, "SHOW / HIDE PHOTO", _toggle_reference)
+    _button(more_buttons, "SHOW PHOTO", _toggle_reference)
     _button(more_buttons, "DEMO MODEL", _create_demo)
     _button(more_buttons, "HELP", _show_help)
-    var tip := _label(tool_panels[3], "Export to a new GLB filename. Keep your original model as a backup.", 17, MUTED)
-    tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    var tip := _label(more_buttons, "Draft stays in the app. EXPORT GLB creates a shareable file.", 15, MUTED)
+    tip.custom_minimum_size.x = 360
 
     var footer := PanelContainer.new()
     _panel_style(footer, DARK)
@@ -267,7 +293,7 @@ func _create_ui() -> void:
     status_label = _label(footer, "Model Forge ready", 15, MUTED)
     help_dialog = AcceptDialog.new()
     help_dialog.title = "Model Forge • Quick Guide"
-    help_dialog.dialog_text = "1. OPEN a GLB (or choose the demo in MORE).\n2. Drag in the viewport to ORBIT the camera.\n3. SHAPE: tap a point to select it, then turn EDIT POINTS on to drag/pull it. Switch EDIT POINTS off to orbit again.\n4. SOFT bends neighboring geometry; Radius controls its reach.\n5. MIRROR matches the opposite X side.\n6. MOVE: fine-tune with X/Y/Z buttons.\n7. VIEW: front, side, top and orbit-only mode.\n8. UNDO edits; SAVE exports a new GLB.\n\nTwo fingers pan and zoom. Always keep original models."
+    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB (or FILES > DEMO MODEL).\n2. SHAPE: pick a PART. Tap a point to select it. Enable EDIT POINTS to drag the mesh. Leave it OFF to rotate the camera.\n3. SOFT SHAPE bends nearby vertices; MIRROR X edits the other side. SMOOTH reduces surface bumps.\n4. MOVE: choose WHOLE PART to position/rotate/scale a component, or SELECTED POINT for precise X/Y/Z movement.\n5. VIEW: Front, Side, Top, 3/4. Turn on WIREFRAME to see mesh edges; SOLO PART isolates a component temporarily.\n6. FILES: SAVE DRAFT keeps work on this phone. EXPORT GLB creates the shareable model.\n\nPinch to zoom. Two-finger drag pans. Original imported files are never overwritten automatically."
     add_child(help_dialog)
     _show_tab(0)
 
@@ -282,10 +308,10 @@ func _show_tab(index: int) -> void:
     _update_touch_hint()
     if status_label != null:
         var messages := [
-            "SHAPE: tap a point and drag. SOFT bends nearby points.",
-            "MOVE: adjust the selected point with precision XYZ steps.",
-            "VIEW: drag to orbit, pinch to zoom, or choose a camera angle.",
-            "MORE: photo references, demo model, help."
+            "SHAPE • Choose a part; tap a point; enable EDIT POINTS to drag.",
+            "MOVE • Choose WHOLE PART or SELECTED POINT; use X/Y/Z buttons.",
+            "VIEW • Camera angles, wireframe, part isolation and reference photo.",
+            "FILES • Open, export, save/restore a draft, load a reference image."
         ]
         _notify(messages[index])
 
@@ -309,6 +335,17 @@ func _update_touch_hint() -> void:
     else:
         touch_hint.text = "VIEW MODE • Drag to rotate • Two fingers to zoom / pan"
 
+
+func _move_target_changed(index: int) -> void:
+    _notify("Moving whole part" if index == 1 else "Moving selected mesh point")
+    _update_marker()
+
+func _wire_changed(enabled: bool) -> void:
+    if wire_preview != null:
+        wire_preview.visible = enabled
+        if enabled:
+            _rebuild_wire_overlay()
+    _notify("Wireframe overlay ON" if enabled else "Wireframe overlay OFF")
 
 func _soft_changed(enabled: bool) -> void:
     edit.soft_enabled = enabled
