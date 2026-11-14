@@ -127,7 +127,13 @@ func _create_ui() -> void:
     whole.add_child(header)
     var toolbar := HBoxContainer.new()
     toolbar.add_theme_constant_override("separation", 8)
-    header.add_child(toolbar)
+    var toolbar_scroll := ScrollContainer.new()
+    toolbar_scroll.custom_minimum_size.y = 64
+    toolbar_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    toolbar_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    toolbar_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    header.add_child(toolbar_scroll)
+    toolbar_scroll.add_child(toolbar)
     var brand := _label(toolbar, "MODEL FORGE", 22, ACCENT)
     brand.custom_minimum_size.x = 198
     project_label = _label(toolbar, "Untitled • SAVED", 14, MUTED)
@@ -190,7 +196,7 @@ func _create_ui() -> void:
         var tab := _button(tabs, tab_name, func(): _show_tab(index))
         tab_buttons.append(tab)
     var pages := Control.new()
-    pages.custom_minimum_size.y = 204
+    pages.custom_minimum_size.y = 216
     stack.add_child(pages)
     for i in range(4):
         var page := VBoxContainer.new()
@@ -201,8 +207,7 @@ func _create_ui() -> void:
         tool_panels.append(page)
 
     # Shape: choose a part, select a point, optionally bend its neighbors.
-    var shape_row := HBoxContainer.new()
-    tool_panels[0].add_child(shape_row)
+    var shape_row := _mobile_row(tool_panels[0])
     mesh_picker = OptionButton.new()
     mesh_picker.custom_minimum_size = Vector2(205, 56)
     mesh_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -222,9 +227,7 @@ func _create_ui() -> void:
     _button(shape_row, "SOLO", _toggle_isolate)
     vertex_label = _label(shape_row, "No point", 15, Color.WHITE)
     vertex_label.custom_minimum_size.x = 158
-    var shape_options := HBoxContainer.new()
-    shape_options.add_theme_constant_override("separation", 12)
-    tool_panels[0].add_child(shape_options)
+    var shape_options := _mobile_row(tool_panels[0])
     edit_toggle = CheckButton.new()
     edit_toggle.text = "EDIT POINTS"
     edit_toggle.button_pressed = false
@@ -251,9 +254,7 @@ func _create_ui() -> void:
     soft_radius_slider.value_changed.connect(_radius_changed)
     shape_options.add_child(soft_radius_slider)
     _button(shape_options, "SMOOTH", _smooth_selection)
-    var surface_row := HBoxContainer.new()
-    surface_row.add_theme_constant_override("separation", 12)
-    tool_panels[0].add_child(surface_row)
+    var surface_row := _mobile_row(tool_panels[0])
     _label(surface_row, "SURFACE", 16, ACCENT)
     surface_profile_picker = OptionButton.new()
     surface_profile_picker.custom_minimum_size = Vector2(260, 54)
@@ -276,8 +277,7 @@ func _create_ui() -> void:
     profile_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
     # Move: explicitly choose whole-part placement or point adjustments.
-    var target_row := HBoxContainer.new()
-    tool_panels[1].add_child(target_row)
+    var target_row := _mobile_row(tool_panels[1])
     _label(target_row, "EDIT", 17, ACCENT)
     move_target_picker = OptionButton.new()
     move_target_picker.custom_minimum_size = Vector2(275, 52)
@@ -293,8 +293,7 @@ func _create_ui() -> void:
     _button(target_row, "ROTATE +5°", func(): _rotate_part(5.0))
     _button(target_row, "SMALLER", func(): _scale_part(0.95))
     _button(target_row, "BIGGER", func(): _scale_part(1.05))
-    var move_row := HBoxContainer.new()
-    tool_panels[1].add_child(move_row)
+    var move_row := _mobile_row(tool_panels[1])
     for item in [
         ["X −", Vector3.LEFT], ["X +", Vector3.RIGHT],
         ["Y −", Vector3.DOWN], ["Y +", Vector3.UP],
@@ -302,8 +301,7 @@ func _create_ui() -> void:
     ]:
         var direction: Vector3 = item[1]
         _button(move_row, item[0], func(): _nudge(direction))
-    var move_settings := HBoxContainer.new()
-    tool_panels[1].add_child(move_settings)
+    var move_settings := _mobile_row(tool_panels[1])
     _label(move_settings, "STEP SIZE", 17, MUTED)
     step_box = SpinBox.new()
     step_box.custom_minimum_size = Vector2(180, 56)
@@ -322,16 +320,14 @@ func _create_ui() -> void:
     _label(move_settings, "RED X • GREEN Y • BLUE Z: drag to move. WHOLE MODEL moves every part.", 15, ACCENT)
 
     # View: preset cameras, wireframe inspection and orbit-only mode.
-    var views := HBoxContainer.new()
-    tool_panels[2].add_child(views)
+    var views := _mobile_row(tool_panels[2])
     _button(views, "FIT ALL", _frame_model)
     _button(views, "FOCUS PART", _focus_part)
     _button(views, "FRONT", func(): _preset_view(0))
     _button(views, "SIDE", func(): _preset_view(1))
     _button(views, "TOP", func(): _preset_view(2))
     _button(views, "3/4", func(): _preset_view(3))
-    var view_row := HBoxContainer.new()
-    tool_panels[2].add_child(view_row)
+    var view_row := _mobile_row(tool_panels[2])
     wire_toggle = CheckButton.new()
     wire_toggle.text = "WIREFRAME"
     wire_toggle.toggled.connect(_wire_changed)
@@ -365,14 +361,12 @@ func _create_ui() -> void:
     _label(view_row, "Drag = rotate • pinch = zoom • two-finger drag = pan", 15, MUTED)
 
     # Files: clear separation between a private working draft and exported GLB.
-    var file_row := HBoxContainer.new()
-    tool_panels[3].add_child(file_row)
+    var file_row := _mobile_row(tool_panels[3])
     _button(file_row, "OPEN GLB", _request_open_glb)
     _button(file_row, "EXPORT GLB", _request_save_glb)
     _button(file_row, "SAVE DRAFT", _save_draft)
     _button(file_row, "RESTORE DRAFT", _restore_draft)
-    var more_buttons := HBoxContainer.new()
-    tool_panels[3].add_child(more_buttons)
+    var more_buttons := _mobile_row(tool_panels[3])
     _button(more_buttons, "LOAD PHOTO", _request_reference)
     _button(more_buttons, "SHOW PHOTO", _toggle_reference)
     _button(more_buttons, "DEMO MODEL", _create_demo)
@@ -622,6 +616,21 @@ func _panel_style(panel: PanelContainer, color: Color) -> void:
     style.content_margin_top = 9
     style.content_margin_bottom = 9
     panel.add_theme_stylebox_override("panel", style)
+
+func _mobile_row(parent: Node) -> HBoxContainer:
+    # Dense editing strips must scroll horizontally on an Android phone.
+    # Never shrink or clip the action buttons off the display.
+    var strip := ScrollContainer.new()
+    strip.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    strip.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    strip.custom_minimum_size.y = 63
+    strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    parent.add_child(strip)
+    var content := HBoxContainer.new()
+    content.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+    content.add_theme_constant_override("separation", 12)
+    strip.add_child(content)
+    return content
 
 func _button(parent: Node, caption: String, action: Callable) -> Button:
     var button := Button.new()
