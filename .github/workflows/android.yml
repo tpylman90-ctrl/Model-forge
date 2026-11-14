@@ -85,8 +85,6 @@ jobs:
           godot --headless --path . --install-android-build-template --export-debug Android build/ModelForge-debug.apk
           test -s build/ModelForge-debug.apk
           ls -lh build/ModelForge-debug.apk
-          echo "Confirm the native SAF bridge is in one of the APK DEX files"
-          unzip -p build/ModelForge-debug.apk 'classes*.dex' | strings | grep -F 'ModelForgeFiles' > /dev/null
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -95,3 +93,13 @@ jobs:
           if-no-files-found: error
           retention-days: 21
           compression-level: 0
+      - name: Audit native class after preserving APK
+        shell: bash
+        run: |
+          unzip -Z1 build/ModelForge-debug.apk | grep -F '.dex'
+          if unzip -p build/ModelForge-debug.apk 'classes*.dex' | strings | grep -F 'ModelForgeFiles' > /dev/null; then
+            echo "ModelForgeFiles class included in APK"
+          else
+            echo "ERROR: APK missing native ModelForgeFiles bridge"
+            exit 1
+          fi
