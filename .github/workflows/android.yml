@@ -86,7 +86,7 @@ jobs:
           test -s build/ModelForge-debug.apk
           ls -lh build/ModelForge-debug.apk
           echo "Confirm the native SAF bridge is in one of the APK DEX files"
-          unzip -p build/ModelForge-debug.apk 'classes*.dex' | strings | grep -q 'ModelForgeFiles'
+          unzip -p build/ModelForge-debug.apk 'classes*.dex' | strings | grep -F 'ModelForgeFiles' > /dev/null
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
