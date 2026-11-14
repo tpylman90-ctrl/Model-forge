@@ -61,6 +61,9 @@ jobs:
       - name: Validate 100-plus part highlight and whole model editing
         shell: bash
         run: timeout --signal=SIGTERM --kill-after=5s 90s godot --headless --path . --script res://tests/whole_model_smoke.gd
+      - name: Test precise part picking, zebra inspection and narrow phone toolbars
+        shell: bash
+        run: timeout --signal=SIGTERM --kill-after=5s 90s godot --headless --path . --script res://tests/precision_inspection_smoke.gd
       - name: Install Godot 4.5 Android SDK platform and build tools
         shell: bash
         run: |
