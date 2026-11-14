@@ -1087,7 +1087,7 @@ func _update_marker() -> void:
     if not edit.has_selection():
         vertex_label.text = "Vertex: none"
         return
-    var point := edit.vertex_position()
+    var point: Vector3 = edit.vertex_position()
     marker.global_position = edit.target.to_global(point)
     marker.scale = Vector3.ONE * maxf(0.035, orbit_distance * 0.011)
     vertex_label.text = "Point %d\n%.2f, %.2f, %.2f" % [edit.selected_vertex, point.x, point.y, point.z]
