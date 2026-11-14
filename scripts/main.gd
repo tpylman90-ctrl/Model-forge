@@ -514,7 +514,7 @@ func _set_clay(enabled: bool) -> void:
         _set_zebra(false)
     if enabled:
         clay_material = StandardMaterial3D.new()
-        clay_material.albedo_color = Color("#b8c2cf")
+        clay_material.albedo_color = Color("#92969c")
         clay_material.roughness = 0.32
         clay_material.metallic = 0.15
         previous_overrides.clear()
