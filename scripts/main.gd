@@ -50,6 +50,22 @@ var tab_buttons: Array = []
 var active_tab: int = 0
 var soft_radius_slider: HSlider
 var soft_radius_label: Label
+var surface_profile_picker: OptionButton
+var section_axis_picker: OptionButton
+var gizmo_root: Node3D
+var gizmo_handles: Array = []
+var gizmo_axis: int = -1
+var gizmo_drag_active: bool = false
+var gizmo_drag_part: bool = false
+var gizmo_drag_changed: bool = false
+var gizmo_start_transform: Transform3D
+var gizmo_start_world: Vector3
+var gizmo_world_length: float = 1.0
+var gizmo_drag_start_screen: Vector2
+var gizmo_drag_axis_screen: Vector2
+var gizmo_drag_px_length: float = 1.0
+var gizmo_drag_vertex_editor: RefCounted
+var gizmo_last_world_delta: Vector3 = Vector3.ZERO
 var help_dialog: AcceptDialog
 var open_dialog: FileDialog
 var open_button: Button
@@ -156,7 +172,7 @@ func _create_ui() -> void:
         var tab := _button(tabs, tab_name, func(): _show_tab(index))
         tab_buttons.append(tab)
     var pages := Control.new()
-    pages.custom_minimum_size.y = 148
+    pages.custom_minimum_size.y = 204
     stack.add_child(pages)
     for i in range(4):
         var page := VBoxContainer.new()
@@ -209,6 +225,29 @@ func _create_ui() -> void:
     soft_radius_slider.value_changed.connect(_radius_changed)
     shape_options.add_child(soft_radius_slider)
     _button(shape_options, "SMOOTH", _smooth_selection)
+    var surface_row := HBoxContainer.new()
+    surface_row.add_theme_constant_override("separation", 12)
+    tool_panels[0].add_child(surface_row)
+    _label(surface_row, "SURFACE", 16, ACCENT)
+    surface_profile_picker = OptionButton.new()
+    surface_profile_picker.custom_minimum_size = Vector2(260, 54)
+    surface_profile_picker.add_item("ROUND BRUSH")
+    surface_profile_picker.add_item("BODY SECTION")
+    surface_profile_picker.add_item("KEEP HARD EDGES")
+    surface_profile_picker.item_selected.connect(_profile_changed)
+    surface_row.add_child(surface_profile_picker)
+    _label(surface_row, "SECTION AXIS", 14, MUTED)
+    section_axis_picker = OptionButton.new()
+    section_axis_picker.custom_minimum_size = Vector2(165, 54)
+    for item in ["X WIDTH", "Y HEIGHT", "Z LENGTH"]:
+        section_axis_picker.add_item(item)
+    section_axis_picker.select(2)
+    section_axis_picker.disabled = true
+    section_axis_picker.item_selected.connect(_section_axis_changed)
+    surface_row.add_child(section_axis_picker)
+    var profile_hint := _label(surface_row, "Body Section reshapes a slice; Keep Hard Edges protects creases.", 15, MUTED)
+    profile_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    profile_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
     # Move: explicitly choose whole-part placement or point adjustments.
     var target_row := HBoxContainer.new()
@@ -253,7 +292,7 @@ func _create_ui() -> void:
     for axis in ["SCREEN", "X AXIS", "Y AXIS", "Z AXIS"]:
         axis_picker.add_item(axis)
     move_settings.add_child(axis_picker)
-    _label(move_settings, "PART = entire component   •   POINT = mesh geometry", 15, MUTED)
+    _label(move_settings, "DRAG X RED  •  Y GREEN  •  Z BLUE handles directly on the model", 15, ACCENT)
 
     # View: preset cameras, wireframe inspection and orbit-only mode.
     var views := HBoxContainer.new()
@@ -302,7 +341,7 @@ func _create_ui() -> void:
     status_label = _label(footer, "Model Forge ready", 15, MUTED)
     help_dialog = AcceptDialog.new()
     help_dialog.title = "Model Forge • Quick Guide"
-    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB (or FILES > DEMO MODEL).\n2. SHAPE: pick a PART. Tap a point to select it. Enable EDIT POINTS to drag the mesh. Leave it OFF to rotate the camera.\n3. SOFT SHAPE bends nearby vertices; MIRROR X edits the other side. SMOOTH reduces surface bumps.\n4. MOVE: choose WHOLE PART to position/rotate/scale a component, or SELECTED POINT for precise X/Y/Z movement.\n5. VIEW: Front, Side, Top, 3/4. Turn on WIREFRAME to see mesh edges; SOLO PART isolates a component temporarily.\n6. FILES: SAVE DRAFT keeps work on this phone. EXPORT GLB creates the shareable model.\n\nPinch to zoom. Two-finger drag pans. Original imported files are never overwritten automatically."
+    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB (or FILES > DEMO MODEL).\n2. SHAPE: pick a PART and tap a vertex. Enable EDIT POINTS to pull it; OFF is safer camera mode.\n3. SOFT SHAPE: ROUND BRUSH adjusts a local area, BODY SECTION adjusts a cross-section (choose X/Y/Z), KEEP HARD EDGES avoids crossing strong normal changes. MIRROR X affects the opposite side.\n4. MOVE: WHOLE PART or SELECTED POINT. Touch and drag a colored handle directly on the model: X red, Y green, Z blue. Or use the precision X/Y/Z buttons.\n5. VIEW: Front, Side, Top, 3/4. CLAY and WIREFRAME reveal geometry, SOLO PART isolates temporarily.\n6. FILES: SAVE DRAFT keeps one working version on the phone; EXPORT GLB creates the shareable model.\n\nPinch to zoom and two-finger drag to pan. Imported GLB files are not overwritten automatically."
     add_child(help_dialog)
     _show_tab(0)
 
@@ -360,7 +399,18 @@ func _wire_changed(enabled: bool) -> void:
 func _soft_changed(enabled: bool) -> void:
     edit.soft_enabled = enabled
     soft_radius_slider.editable = enabled
-    _notify("SOFT on: nearby geometry moves with the point." if enabled else "SOFT off: only the selected point moves.")
+    _notify("SOFT on: controlled surface deformation" if enabled else "SOFT off: single point movement")
+
+func _profile_changed(index: int) -> void:
+    edit.soft_profile = index
+    section_axis_picker.disabled = index != 1
+    if index != 0 and not soft_toggle.button_pressed:
+        soft_toggle.button_pressed = true
+    _notify(["Round brush shaping", "Body section shaping along chosen axis", "Hard-edge guarded brush shaping"][index])
+
+func _section_axis_changed(index: int) -> void:
+    edit.section_axis = index
+    _notify("Body section axis: " + ["X width", "Y height", "Z length"][index])
 
 func _radius_changed(value: float) -> void:
     edit.soft_radius = value
@@ -848,6 +898,8 @@ func _choose_mesh(index: int) -> void:
         next_editor.soft_enabled = soft_toggle.button_pressed if soft_toggle != null else false
         next_editor.mirror_enabled = mirror_toggle.button_pressed if mirror_toggle != null else false
         next_editor.soft_radius = float(soft_radius_slider.value) if soft_radius_slider != null else 0.75
+        next_editor.soft_profile = surface_profile_picker.selected if surface_profile_picker != null else 0
+        next_editor.section_axis = section_axis_picker.selected if section_axis_picker != null else 2
         if next_editor.set_target(instance):
             if next_editor.vertex_count() > 0:
                 next_editor.select_vertex(0, 0)
@@ -855,6 +907,11 @@ func _choose_mesh(index: int) -> void:
         next_editor.edit_committed.connect(_record_geometry_commit.bind(next_editor))
         editor_by_mesh[instance] = next_editor
         edit = next_editor
+    edit.soft_enabled = soft_toggle.button_pressed
+    edit.mirror_enabled = mirror_toggle.button_pressed
+    edit.soft_radius = float(soft_radius_slider.value)
+    edit.soft_profile = surface_profile_picker.selected
+    edit.section_axis = section_axis_picker.selected
     _geometry_changed()
     _update_project_header()
     _notify("Part %d/%d: %s • %d vertices" % [index + 1, mesh_nodes.size(), instance.name, edit.vertex_count()])
