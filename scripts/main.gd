@@ -1,5 +1,5 @@
 extends Control
-## Model Forge v0.6: highlighted selection, part finder and whole-model editing.
+## Model Forge v0.7: precise part picking, zebra inspection and scrollable phone tools.
 const MeshEdit = preload("res://scripts/mesh_editor.gd")
 const AxisGizmo = preload("res://scripts/axis_gizmo.gd")
 const DARK := Color("#101924")
@@ -31,6 +31,12 @@ var mirror_toggle: CheckButton
 var soft_toggle: CheckButton
 var grid_node: MeshInstance3D
 var clay_toggle: CheckButton
+var zebra_toggle: CheckButton
+var zebra_slider: HSlider
+var zebra_material: ShaderMaterial
+var zebra_enabled: bool = false
+var zebra_overrides: Dictionary = {}
+var zebra_band_count: float = 12.0
 var clay_enabled: bool = false
 var previous_overrides: Dictionary = {}
 var clay_material: StandardMaterial3D
@@ -212,6 +218,8 @@ func _create_ui() -> void:
     _button(shape_row, "PART ▶", func(): _cycle_part(1))
     _button(shape_row, "◀ POINT", func(): _cycle_vertex(-1))
     _button(shape_row, "POINT ▶", func(): _cycle_vertex(1))
+    _button(shape_row, "FOCUS", _focus_part)
+    _button(shape_row, "SOLO", _toggle_isolate)
     vertex_label = _label(shape_row, "No point", 15, Color.WHITE)
     vertex_label.custom_minimum_size.x = 158
     var shape_options := HBoxContainer.new()
@@ -332,6 +340,19 @@ func _create_ui() -> void:
     clay_toggle.text = "CLAY"
     clay_toggle.toggled.connect(_set_clay)
     view_row.add_child(clay_toggle)
+    zebra_toggle = CheckButton.new()
+    zebra_toggle.text = "ZEBRA STRIPES"
+    zebra_toggle.toggled.connect(_set_zebra)
+    view_row.add_child(zebra_toggle)
+    _label(view_row, "BANDS", 15, MUTED)
+    zebra_slider = HSlider.new()
+    zebra_slider.custom_minimum_size.x = 160
+    zebra_slider.min_value = 4.0
+    zebra_slider.max_value = 25.0
+    zebra_slider.step = 1.0
+    zebra_slider.value = 12.0
+    zebra_slider.value_changed.connect(_zebra_bands_changed)
+    view_row.add_child(zebra_slider)
     highlight_toggle = CheckButton.new()
     highlight_toggle.text = "HIGHLIGHT PART"
     highlight_toggle.button_pressed = true
@@ -495,6 +516,8 @@ func _focus_part() -> void:
 func _set_clay(enabled: bool) -> void:
     if clay_enabled == enabled:
         return
+    if enabled and zebra_enabled:
+        _set_zebra(false)
     if enabled:
         clay_material = StandardMaterial3D.new()
         clay_material.albedo_color = Color("#b8c2cf")
@@ -514,6 +537,47 @@ func _set_clay(enabled: bool) -> void:
         clay_toggle.set_pressed_no_signal(enabled)
     if status_label != null:
         _notify("Clay preview: material colors temporarily hidden." if enabled else "Original materials restored.")
+
+func _zebra_bands_changed(value: float) -> void:
+    zebra_band_count = value
+    if zebra_material != null:
+        zebra_material.set_shader_parameter("stripe_density", value)
+    if zebra_enabled:
+        _notify("Zebra inspection: %.0f bands" % value)
+
+func _set_zebra(enabled: bool) -> void:
+    if zebra_enabled == enabled:
+        return
+    if enabled:
+        if clay_enabled:
+            _set_clay(false)
+        _clear_selection_highlight()
+        if zebra_material == null:
+            var shader: Shader = load("res://shaders/zebra_inspection.gdshader")
+            if shader == null:
+                _notify("Zebra material unavailable on this build.")
+                if zebra_toggle != null:
+                    zebra_toggle.set_pressed_no_signal(false)
+                return
+            zebra_material = ShaderMaterial.new()
+            zebra_material.shader = shader
+        zebra_material.set_shader_parameter("stripe_density", zebra_band_count)
+        zebra_overrides.clear()
+        for part in mesh_nodes:
+            if is_instance_valid(part):
+                zebra_overrides[part] = part.material_override
+                part.material_override = zebra_material
+    else:
+        for part in zebra_overrides:
+            if is_instance_valid(part):
+                part.material_override = zebra_overrides[part]
+        zebra_overrides.clear()
+    zebra_enabled = enabled
+    if zebra_toggle != null:
+        zebra_toggle.set_pressed_no_signal(enabled)
+    _refresh_selection_highlight()
+    if status_label != null:
+        _notify("Zebra: simulated reflection bands show changes in panel normals." if enabled else "Original material appearance restored.")
 
 func _preset_view(preset: int) -> void:
     match preset:
@@ -872,20 +936,28 @@ func _save_glb(path: String, clear_dirty: bool = true) -> bool:
     _show_all_parts()
     _clear_selection_highlight()
     var resume_clay := clay_enabled
+    var resume_zebra := zebra_enabled
+    if resume_zebra:
+        _set_zebra(false)
     if resume_clay:
         _set_clay(false)
     var document := GLTFDocument.new()
     var state := GLTFState.new()
     var problem := document.append_from_scene(asset_host, state)
-    _refresh_selection_highlight()
     if problem != OK:
-        if resume_clay:
+        if resume_zebra:
+            _set_zebra(true)
+        elif resume_clay:
             _set_clay(true)
+        _refresh_selection_highlight()
         _notify("Export error: %s" % error_string(problem))
         return false
     var bytes := document.generate_buffer(state)
-    if resume_clay:
+    if resume_zebra:
+        _set_zebra(true)
+    elif resume_clay:
         _set_clay(true)
+    _refresh_selection_highlight()
     if bytes.is_empty():
         _notify("Export failed: generated GLB is empty.")
         return false
@@ -924,6 +996,7 @@ func _load_reference(path: String) -> void:
 func _clear_asset() -> void:
     _clear_selection_highlight()
     _show_all_parts()
+    _set_zebra(false)
     _set_clay(false)
     edit.set_target(null)
     editor_by_mesh.clear()
@@ -985,7 +1058,7 @@ func _refresh_selection_highlight() -> void:
         _clear_selection_highlight()
         return
     var whole_model := active_tab == 1 and _is_whole_model_mode()
-    var intended: MeshInstance3D = null if whole_model else edit.target
+    var intended: MeshInstance3D = null if whole_model or zebra_enabled else edit.target
     if selected_overlay_mesh != intended:
         if selected_overlay_mesh != null and is_instance_valid(selected_overlay_mesh):
             selected_overlay_mesh.material_overlay = selected_original_overlay
