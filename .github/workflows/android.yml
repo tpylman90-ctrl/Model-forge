@@ -55,6 +55,9 @@ jobs:
       - name: Validate full editing workflow on demo GLB
         shell: bash
         run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/workflow_smoke.gd
+      - name: Validate touch axes and automotive surface shaping
+        shell: bash
+        run: timeout --signal=SIGTERM --kill-after=5s 45s godot --headless --path . --script res://tests/gizmo_surface_smoke.gd
       - name: Install Godot 4.5 Android SDK platform and build tools
         shell: bash
         run: |
