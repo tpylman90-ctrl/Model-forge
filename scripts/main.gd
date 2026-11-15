@@ -689,6 +689,11 @@ func _apply_touch_ui(node: Node) -> void:
         picker.custom_minimum_size.y = maxf(74.0, picker.custom_minimum_size.y)
         picker.custom_minimum_size.x = maxf(205.0, picker.custom_minimum_size.x)
         picker.add_theme_font_size_override("font_size", 21)
+        var popup_style := Theme.new()
+        popup_style.set_font_size("font_size", "PopupMenu", 23)
+        popup_style.set_constant("v_separation", "PopupMenu", 16)
+        popup_style.set_constant("h_separation", "PopupMenu", 14)
+        picker.get_popup().theme = popup_style
     elif node is SpinBox:
         var spin: SpinBox = node
         spin.custom_minimum_size.y = maxf(76.0, spin.custom_minimum_size.y)
