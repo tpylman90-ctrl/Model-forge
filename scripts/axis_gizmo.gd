@@ -25,8 +25,8 @@ func _ready() -> void:
         var shaft := MeshInstance3D.new()
         shaft.name = ["X_Red", "Y_Green", "Z_Blue"][axis_index] + "_Shaft"
         var shaft_mesh := CylinderMesh.new()
-        shaft_mesh.top_radius = 0.032
-        shaft_mesh.bottom_radius = 0.032
+        shaft_mesh.top_radius = 0.043
+        shaft_mesh.bottom_radius = 0.043
         shaft_mesh.height = 0.78
         shaft_mesh.radial_segments = 10
         shaft.mesh = shaft_mesh
@@ -38,8 +38,8 @@ func _ready() -> void:
         var grip := MeshInstance3D.new()
         grip.name = ["X", "Y", "Z"][axis_index] + "_DragGrip"
         var sphere := SphereMesh.new()
-        sphere.radius = 0.15
-        sphere.height = 0.30
+        sphere.radius = 0.19
+        sphere.height = 0.38
         sphere.radial_segments = 12
         sphere.rings = 6
         grip.mesh = sphere
@@ -67,7 +67,7 @@ func hit_axis(viewport_position: Vector2, view_camera: Camera3D) -> int:
         return -1
     var origin_px: Vector2 = view_camera.unproject_position(origin)
     var best_axis := -1
-    var best_distance := 37.0
+    var best_distance := 49.0
     for a in range(3):
         var tip: Vector3 = tip_world(a)
         if view_camera.is_position_behind(tip):
