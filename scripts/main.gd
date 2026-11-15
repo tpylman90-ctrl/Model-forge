@@ -109,6 +109,7 @@ var last_pinch_midpoint := Vector2.ZERO
 func _ready() -> void:
     get_viewport().gui_release_focus()
     _create_ui()
+    _apply_touch_ui(self)
     _create_scene()
     _create_file_dialogs()
     _connect_android_file_bridge()
@@ -128,7 +129,7 @@ func _create_ui() -> void:
     var toolbar := HBoxContainer.new()
     toolbar.add_theme_constant_override("separation", 8)
     var toolbar_scroll := ScrollContainer.new()
-    toolbar_scroll.custom_minimum_size.y = 64
+    toolbar_scroll.custom_minimum_size.y = 76
     toolbar_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     toolbar_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
     toolbar_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -196,7 +197,7 @@ func _create_ui() -> void:
         var tab := _button(tabs, tab_name, func(): _show_tab(index))
         tab_buttons.append(tab)
     var pages := Control.new()
-    pages.custom_minimum_size.y = 216
+    pages.custom_minimum_size.y = 266
     stack.add_child(pages)
     for i in range(4):
         var page := VBoxContainer.new()
@@ -244,7 +245,7 @@ func _create_ui() -> void:
     shape_options.add_child(soft_toggle)
     soft_radius_label = _label(shape_options, "Radius 0.75", 16, MUTED)
     soft_radius_slider = HSlider.new()
-    soft_radius_slider.custom_minimum_size.x = 180
+    soft_radius_slider.custom_minimum_size.x = 265
     soft_radius_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     soft_radius_slider.min_value = 0.15
     soft_radius_slider.max_value = 4.0
@@ -253,6 +254,8 @@ func _create_ui() -> void:
     soft_radius_slider.editable = false
     soft_radius_slider.value_changed.connect(_radius_changed)
     shape_options.add_child(soft_radius_slider)
+    _button(shape_options, "RADIUS −", func(): _nudge_radius(-0.05))
+    _button(shape_options, "RADIUS +", func(): _nudge_radius(0.05))
     _button(shape_options, "SMOOTH", _smooth_selection)
     var surface_row := _mobile_row(tool_panels[0])
     _label(surface_row, "SURFACE", 16, ACCENT)
@@ -304,12 +307,14 @@ func _create_ui() -> void:
     var move_settings := _mobile_row(tool_panels[1])
     _label(move_settings, "STEP SIZE", 17, MUTED)
     step_box = SpinBox.new()
-    step_box.custom_minimum_size = Vector2(180, 56)
+    step_box.custom_minimum_size = Vector2(235, 76)
     step_box.min_value = 0.0
     step_box.max_value = 20.0
     step_box.step = 0.01
     step_box.value = 0.10
     move_settings.add_child(step_box)
+    _button(move_settings, "− STEP", func(): _nudge_step(-0.01))
+    _button(move_settings, "+ STEP", func(): _nudge_step(0.01))
     _label(move_settings, "DRAG ALONG", 17, MUTED)
     axis_picker = OptionButton.new()
     axis_picker.custom_minimum_size = Vector2(225, 56)
@@ -342,13 +347,15 @@ func _create_ui() -> void:
     view_row.add_child(zebra_toggle)
     _label(view_row, "BANDS", 15, MUTED)
     zebra_slider = HSlider.new()
-    zebra_slider.custom_minimum_size.x = 160
+    zebra_slider.custom_minimum_size.x = 265
     zebra_slider.min_value = 4.0
     zebra_slider.max_value = 25.0
     zebra_slider.step = 1.0
     zebra_slider.value = 12.0
     zebra_slider.value_changed.connect(_zebra_bands_changed)
     view_row.add_child(zebra_slider)
+    _button(view_row, "BANDS −", func(): _nudge_zebra(-1.0))
+    _button(view_row, "BANDS +", func(): _nudge_zebra(1.0))
     highlight_toggle = CheckButton.new()
     highlight_toggle.text = "HIGHLIGHT PART"
     highlight_toggle.button_pressed = true
@@ -476,6 +483,17 @@ func _section_axis_changed(index: int) -> void:
 func _radius_changed(value: float) -> void:
     edit.soft_radius = value
     soft_radius_label.text = "Radius %.2f" % value
+
+func _nudge_radius(direction: float) -> void:
+    soft_radius_slider.value = clampf(
+        soft_radius_slider.value + direction, soft_radius_slider.min_value, soft_radius_slider.max_value
+    )
+
+func _nudge_zebra(direction: float) -> void:
+    zebra_slider.value = clampf(zebra_slider.value + direction, zebra_slider.min_value, zebra_slider.max_value)
+
+func _nudge_step(direction: float) -> void:
+    step_box.value = clampf(snappedf(step_box.value + direction, 0.01), step_box.min_value, step_box.max_value)
 
 func _smooth_selection() -> void:
     if not edit.has_selection():
@@ -617,13 +635,83 @@ func _panel_style(panel: PanelContainer, color: Color) -> void:
     style.content_margin_bottom = 9
     panel.add_theme_stylebox_override("panel", style)
 
+func _touch_knob_texture(active: bool, disabled: bool = false) -> Texture2D:
+    # Procedurally paint a 56 px touch handle with a 2 px contrasting rim.
+    # Controls remain Android-native Godot widgets; no image asset needed.
+    var image := Image.create(56, 56, false, Image.FORMAT_RGBA8)
+    image.fill(Color.TRANSPARENT)
+    var outer: Color = Color("#102333")
+    var face: Color = Color("#62f2cf") if active else Color("#39cfb1")
+    if disabled:
+        face = Color("#748895")
+    for y in range(56):
+        for x in range(56):
+            var distance: float = Vector2(float(x) - 27.5, float(y) - 27.5).length()
+            if distance > 26.0:
+                continue
+            var alpha: float = clampf(26.0 - distance, 0.0, 1.0)
+            var tint: Color = outer if distance > 23.0 else face
+            image.set_pixel(x, y, Color(tint.r, tint.g, tint.b, alpha))
+    return ImageTexture.create_from_image(image)
+
+func _touch_track(fill: Color) -> StyleBoxFlat:
+    var box := StyleBoxFlat.new()
+    box.bg_color = fill
+    box.set_corner_radius_all(11)
+    box.content_margin_top = 11.0
+    box.content_margin_bottom = 11.0
+    box.content_margin_left = 8.0
+    box.content_margin_right = 8.0
+    return box
+
+func _style_touch_slider(slider: HSlider) -> void:
+    slider.custom_minimum_size.y = 76.0
+    slider.custom_minimum_size.x = maxf(slider.custom_minimum_size.x, 265.0)
+    slider.add_theme_icon_override("grabber", _touch_knob_texture(false))
+    slider.add_theme_icon_override("grabber_highlight", _touch_knob_texture(true))
+    slider.add_theme_icon_override("grabber_disabled", _touch_knob_texture(false, true))
+    slider.add_theme_stylebox_override("slider", _touch_track(Color("#304456")))
+    slider.add_theme_stylebox_override("grabber_area", _touch_track(Color("#319f8f")))
+    slider.add_theme_stylebox_override("grabber_area_highlight", _touch_track(Color("#48cdb4")))
+    slider.add_theme_constant_override("grabber_offset", 0)
+
+func _apply_touch_ui(node: Node) -> void:
+    # One reusable Android touch scale applied to every current and future tab.
+    if node is HSlider:
+        _style_touch_slider(node)
+    elif node is CheckButton:
+        var toggle: CheckButton = node
+        toggle.custom_minimum_size.y = maxf(72.0, toggle.custom_minimum_size.y)
+        toggle.custom_minimum_size.x = maxf(150.0, toggle.custom_minimum_size.x)
+        toggle.add_theme_font_size_override("font_size", 21)
+    elif node is OptionButton:
+        var picker: OptionButton = node
+        picker.custom_minimum_size.y = maxf(74.0, picker.custom_minimum_size.y)
+        picker.custom_minimum_size.x = maxf(205.0, picker.custom_minimum_size.x)
+        picker.add_theme_font_size_override("font_size", 21)
+    elif node is SpinBox:
+        var spin: SpinBox = node
+        spin.custom_minimum_size.y = maxf(76.0, spin.custom_minimum_size.y)
+        spin.get_line_edit().add_theme_font_size_override("font_size", 23)
+    elif node is LineEdit:
+        var field: LineEdit = node
+        field.custom_minimum_size.y = maxf(74.0, field.custom_minimum_size.y)
+        field.add_theme_font_size_override("font_size", 21)
+    elif node is Button:
+        var btn: Button = node
+        btn.custom_minimum_size.y = maxf(70.0, btn.custom_minimum_size.y)
+        btn.add_theme_font_size_override("font_size", 21)
+    for child in node.get_children():
+        if child is Control:
+            _apply_touch_ui(child)
+
 func _mobile_row(parent: Node) -> HBoxContainer:
     # Dense editing strips must scroll horizontally on an Android phone.
     # Never shrink or clip the action buttons off the display.
     var strip := ScrollContainer.new()
     strip.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
     strip.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-    strip.custom_minimum_size.y = 63
+    strip.custom_minimum_size.y = 82
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     parent.add_child(strip)
     var content := HBoxContainer.new()
@@ -635,8 +723,8 @@ func _mobile_row(parent: Node) -> HBoxContainer:
 func _button(parent: Node, caption: String, action: Callable) -> Button:
     var button := Button.new()
     button.text = caption
-    button.custom_minimum_size.y = 58
-    button.add_theme_font_size_override("font_size", 19)
+    button.custom_minimum_size = Vector2(96, 70)
+    button.add_theme_font_size_override("font_size", 21)
     button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     button.pressed.connect(action)
     parent.add_child(button)
