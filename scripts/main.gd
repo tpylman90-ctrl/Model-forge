@@ -3,6 +3,7 @@ extends Control
 const MeshEdit = preload("res://scripts/mesh_editor.gd")
 const AxisGizmo = preload("res://scripts/axis_gizmo.gd")
 const StudioRig = preload("res://scripts/studio_rig.gd")
+const CameraJoystick = preload("res://scripts/camera_joystick.gd")
 const DARK := Color("#101924")
 const PANEL := Color("#162231")
 const ACCENT := Color("#3ddbc1")
@@ -82,6 +83,12 @@ var step_box: SpinBox
 var axis_picker: OptionButton
 var edit_toggle: CheckButton
 var touch_hint: Label
+var tool_drawer: PanelContainer
+var tool_drawer_toggle: Button
+var tool_drawer_open: bool = true
+var camera_joystick: Control
+var camera_stick_direction: Vector2 = Vector2.ZERO
+var camera_stick_rate: float = 1.65
 var wire_toggle: CheckButton
 var reference_preview: TextureRect
 var reference_window: PanelContainer
@@ -205,9 +212,44 @@ func _create_ui() -> void:
     ref_column.add_child(reference_preview)
     reference_window.visible = false
 
-    var dock := PanelContainer.new()
-    _panel_style(dock, PANEL)
-    whole.add_child(dock)
+    # Camera orbit has its own touch surface, so the right thumb never
+    # drags mesh vertices or grabs the selected move gizmo.
+    camera_joystick = CameraJoystick.new()
+    camera_joystick.name = "CameraOrbitJoystick"
+    camera_joystick.anchor_left = 1.0
+    camera_joystick.anchor_right = 1.0
+    camera_joystick.anchor_top = 1.0
+    camera_joystick.anchor_bottom = 1.0
+    camera_joystick.offset_left = -189
+    camera_joystick.offset_right = -15
+    camera_joystick.offset_top = -192
+    camera_joystick.offset_bottom = -18
+    camera_joystick.direction_changed.connect(_camera_stick_changed)
+    viewport_area.add_child(camera_joystick)
+
+    # The narrow tab remains docked to the very bottom when the editing
+    # drawer is collapsed. The 3D viewport expands into the released space.
+    var drawer_handle := PanelContainer.new()
+    drawer_handle.name = "BottomToolDrawerHandle"
+    _panel_style(drawer_handle, DARK)
+    whole.add_child(drawer_handle)
+    var drawer_handle_row := HBoxContainer.new()
+    drawer_handle_row.alignment = BoxContainer.ALIGNMENT_CENTER
+    drawer_handle.add_child(drawer_handle_row)
+    tool_drawer_toggle = Button.new()
+    tool_drawer_toggle.name = "ToggleToolDrawer"
+    tool_drawer_toggle.text = "▼ HIDE TOOLS"
+    tool_drawer_toggle.custom_minimum_size = Vector2(285, 58)
+    tool_drawer_toggle.add_theme_font_size_override("font_size", 20)
+    tool_drawer_toggle.set_meta("compact_drawer_handle", true)
+    tool_drawer_toggle.pressed.connect(_toggle_tool_drawer)
+    drawer_handle_row.add_child(tool_drawer_toggle)
+
+    tool_drawer = PanelContainer.new()
+    tool_drawer.name = "EditingToolDrawer"
+    _panel_style(tool_drawer, PANEL)
+    whole.add_child(tool_drawer)
+    var dock := tool_drawer
     var stack := VBoxContainer.new()
     stack.add_theme_constant_override("separation", 7)
     dock.add_child(stack)
@@ -473,7 +515,7 @@ func _create_ui() -> void:
     status_label = _label(footer, "Model Forge ready", 15, MUTED)
     help_dialog = AcceptDialog.new()
     help_dialog.title = "Model Forge • Quick Guide"
-    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB or use the demo.\n2. SHAPE: tap an exterior triangle to select its nearest vertex. Hidden internal points cannot be picked through the surface. Enable EDIT POINTS only when ready to deform.\n3. MOVE: select POINT, WHOLE PART or WHOLE MODEL. Drag colored XYZ handles or use precision buttons.\n4. BUILD: add Box, Cylinder, Sphere or Capsule parts, choose a name, duplicate or delete selected parts, and apply precise local X / Y / Z dimensions (GLB units). Undo restores deleted parts.\n5. VIEW: use TEXTURE CONTRAST to reduce flat lighting while retaining the model's materials; Clay and Zebra are inspection-only, and View shows the selection outline without tinting textures.\n6. FILES: save drafts and export all modeled parts to a new GLB.\n\nPinch to zoom; two-finger drag pans. Import materials are not overwritten by the VIEW lighting controls."
+    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB or use the demo.\n2. SHAPE: tap an exterior triangle to select its nearest vertex. Hidden internal points cannot be picked through the surface. Enable EDIT POINTS only when ready to deform.\n3. MOVE: select POINT, WHOLE PART or WHOLE MODEL. Drag colored XYZ handles or use precision buttons.\n4. BUILD: add Box, Cylinder, Sphere or Capsule parts, choose a name, duplicate or delete selected parts, and apply precise local X / Y / Z dimensions (GLB units). Undo restores deleted parts.\n5. VIEW: use TEXTURE CONTRAST to reduce flat lighting while retaining the model's materials; Clay and Zebra are inspection-only, and View shows the selection outline without tinting textures.\n6. FILES: save drafts and export all modeled parts to a new GLB.\n\nUse the right-side CAMERA JOYSTICK to orbit without touching geometry. Tap the small bottom TOOLS tab to collapse or reopen the controls and get a much larger view. Pinch to zoom; two-finger drag pans. Import materials are not overwritten by VIEW lighting."
     add_child(help_dialog)
     _show_tab(0)
 
@@ -700,6 +742,38 @@ func _delete_selected_part() -> void:
     _mark_dirty()
     _notify("Deleted part (UNDO restores it).")
 
+func _toggle_tool_drawer() -> void:
+    _set_tool_drawer_open(not tool_drawer_open)
+
+func _set_tool_drawer_open(opened: bool) -> void:
+    if tool_drawer == null or tool_drawer_toggle == null:
+        return
+    if not opened and gizmo_drag_active:
+        _finish_gizmo_drag()
+    if not opened and pointer_down:
+        _pointer_end()
+    tool_drawer_open = opened
+    tool_drawer.visible = opened
+    tool_drawer_toggle.text = "▼ HIDE TOOLS" if opened else "▲ OPEN %s TOOLS" % ["SHAPE", "MOVE", "BUILD", "VIEW", "FILES"][active_tab]
+    tool_drawer_toggle.tooltip_text = "Collapse editing controls for a bigger model viewport" if opened else "Show editing controls without changing the active tool"
+    # Leave current camera orbit/zoom unchanged, allowing the newly available
+    # screen space to display more of the model immediately.
+    if camera != null:
+        _update_camera()
+    _update_touch_hint()
+
+func _camera_stick_changed(direction: Vector2) -> void:
+    camera_stick_direction = direction.limit_length(1.0)
+
+func _process(delta: float) -> void:
+    if camera_stick_direction.length_squared() < 0.014:
+        return
+    # Analog input rotates the camera only. Never select or mutate a mesh.
+    var step: float = minf(delta, 0.050)
+    orbit_yaw -= camera_stick_direction.x * camera_stick_rate * step
+    orbit_pitch -= camera_stick_direction.y * camera_stick_rate * 0.82 * step
+    _update_camera()
+
 func _show_tab(index: int) -> void:
     # Switching tools must never leave a 3D drag captured.
     if gizmo_drag_active:
@@ -707,6 +781,8 @@ func _show_tab(index: int) -> void:
         pointer_down = false
         pointer_dragging_vertex = false
     active_tab = index
+    if not tool_drawer_open and tool_drawer_toggle != null:
+        tool_drawer_toggle.text = "▲ OPEN %s TOOLS" % ["SHAPE", "MOVE", "BUILD", "VIEW", "FILES"][active_tab]
     for i in range(tool_panels.size()):
         tool_panels[i].visible = (i == index)
         tab_buttons[i].modulate = Color.WHITE if i == index else Color("#879cab")
@@ -741,6 +817,8 @@ func _update_touch_hint() -> void:
         return
     if edit_toggle != null and edit_toggle.button_pressed:
         touch_hint.text = "EDIT MODE • Drag a point to pull • Switch EDIT POINTS off to orbit"
+    elif not tool_drawer_open:
+        touch_hint.text = "CAMERA • Right joystick to orbit • Pinch to zoom • Bottom tab opens tools"
     elif active_tab == 0:
         touch_hint.text = "SHAPE • Tap a point to select • EDIT POINTS ON to reshape • Drag to orbit while OFF"
     elif active_tab == 2:
@@ -1044,8 +1122,12 @@ func _apply_touch_ui(node: Node) -> void:
         field.add_theme_font_size_override("font_size", 21)
     elif node is Button:
         var btn: Button = node
-        btn.custom_minimum_size.y = maxf(70.0, btn.custom_minimum_size.y)
-        btn.add_theme_font_size_override("font_size", 21)
+        if btn.has_meta("compact_drawer_handle"):
+            btn.custom_minimum_size.y = maxf(58.0, btn.custom_minimum_size.y)
+            btn.add_theme_font_size_override("font_size", 20)
+        else:
+            btn.custom_minimum_size.y = maxf(70.0, btn.custom_minimum_size.y)
+            btn.add_theme_font_size_override("font_size", 21)
     for child in node.get_children():
         if child is Control:
             _apply_touch_ui(child)
@@ -2384,6 +2466,8 @@ func _notification(what: int) -> void:
         if pointer_down:
             _pointer_end()
         touch_positions.clear()
+        if camera_joystick != null:
+            camera_joystick.release()
         last_pinch_distance = 0.0
         last_pinch_midpoint = Vector2.ZERO
 
