@@ -12,8 +12,8 @@ func _run() -> void:
         return
     var app = scene.instantiate()
     root.add_child(app)
-    if app.tab_buttons.size() != 4 or app.move_target_picker == null:
-        _fail("four-tab mobile editor not initialized")
+    if app.tab_buttons.size() != 5 or app.move_target_picker == null:
+        _fail("five-tab mobile editor not initialized")
         return
     if not bool(ProjectSettings.get_setting("display/window/stretch/aspect") == "expand"):
         _fail("UI is not configured for variable-width phone screens")
