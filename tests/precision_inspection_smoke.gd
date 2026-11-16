@@ -122,8 +122,8 @@ func _run() -> void:
     if app.zebra_enabled or front.material_override != old_front or rear.material_override != old_rear:
         _fail("Zebra OFF did not restore existing materials")
         return
-    if front.material_overlay != app.selection_overlay_material:
-        _fail("Selected highlight was not restored after Zebra OFF")
+    if front.material_overlay != null or not app.selection_outline.visible:
+        _fail("VIEW must restore outline-only selection without tinting textures after Zebra OFF")
         return
     app._set_zebra(true)
     app._set_clay(true)
