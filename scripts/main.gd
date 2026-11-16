@@ -451,7 +451,7 @@ func _create_ui() -> void:
     status_label = _label(footer, "Model Forge ready", 15, MUTED)
     help_dialog = AcceptDialog.new()
     help_dialog.title = "Model Forge • Quick Guide"
-    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB or use the demo.\n2. SHAPE: search for a component in Find part, or tap a visible part in the model. The selected part gets an amber outline and tinted surface so you can identify it. Tap a point and enable EDIT POINTS to deform it.\n3. MOVE: choose SELECTED POINT, WHOLE PART, or WHOLE MODEL. WHOLE MODEL moves, rotates, and scales the entire assembly without changing vertex shapes. Use colored X/Y/Z drag handles or numeric buttons.\n4. SOFT SHAPE: Round Brush, Body Section or Keep Hard Edges, with adjustable radius and Mirror X.\n5. VIEW: use STUDIO CLAY for high-contrast normal-based shading. SHOW FACETS emphasizes real polygon planes; LIGHT left/right sweeps reflections over details. Selection is outlined (not painted over) in Clay. WIREFRAME, ZEBRA and SOLO PART help inspect geometry.\n6. FILES: SAVE DRAFT keeps one working copy. EXPORT GLB writes the complete geometry without selection visuals.\n\nPinch to zoom; two-finger drag pans. Whole-model mode is a rigid assembly transform, not a multi-part sculpt."
+    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB or use the demo.\n2. SHAPE: tap an exterior triangle to select its nearest vertex. Hidden internal points cannot be picked through the surface. Enable EDIT POINTS only when ready to deform.\n3. MOVE: select POINT, WHOLE PART or WHOLE MODEL. Drag colored XYZ handles or use precision buttons.\n4. BUILD: add Box, Cylinder, Sphere or Capsule parts, choose a name, duplicate or delete selected parts, and apply precise local X / Y / Z dimensions (GLB units). Undo restores deleted parts.\n5. VIEW: use TEXTURE CONTRAST to reduce flat lighting while retaining the model's materials; Clay and Zebra are inspection-only, and View shows the selection outline without tinting textures.\n6. FILES: save drafts and export all modeled parts to a new GLB.\n\nPinch to zoom; two-finger drag pans. Import materials are not overwritten by the VIEW lighting controls."
     add_child(help_dialog)
     _show_tab(0)
 
@@ -1793,6 +1793,10 @@ func _do_undo() -> void:
     redo_history.append(operation)
     if operation["kind"] == "model":
         _set_model_roots(operation["before"])
+    elif operation["kind"] == "create":
+        _detach_part(operation["node"])
+    elif operation["kind"] == "delete":
+        _register_added_part(operation["node"], operation["parent"], false)
     else:
         var node: MeshInstance3D = operation["node"]
         if not is_instance_valid(node):
@@ -1804,6 +1808,7 @@ func _do_undo() -> void:
         elif operation["kind"] == "part":
             node.transform = operation["before"]
     _geometry_changed()
+    _update_dimensions_fields()
     _mark_dirty()
     _notify("Undid last edit.")
 
@@ -1815,6 +1820,10 @@ func _do_redo() -> void:
     undo_history.append(operation)
     if operation["kind"] == "model":
         _set_model_roots(operation["after"])
+    elif operation["kind"] == "create":
+        _register_added_part(operation["node"], operation["parent"], false)
+    elif operation["kind"] == "delete":
+        _detach_part(operation["node"])
     else:
         var node: MeshInstance3D = operation["node"]
         if not is_instance_valid(node):
@@ -1826,6 +1835,7 @@ func _do_redo() -> void:
         elif operation["kind"] == "part":
             node.transform = operation["after"]
     _geometry_changed()
+    _update_dimensions_fields()
     _mark_dirty()
     _notify("Redid last edit.")
 
