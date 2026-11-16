@@ -2,7 +2,7 @@
 
 **Model Forge** is a free, MIT-licensed, native Android GLB geometry editor designed to make real 3D edits practical on a phone. It serves Neon Forge Racing vehicle work, but there are no vehicle-specific formats or paid dependencies.
 
-## Version 0.8.1 — Studio Clay for readable surface detail
+## Version 0.9 — Build geometry and visible-surface selection
 
 A selected component now has an **amber tinted surface and visible 3D bounding outline**, making it obvious which of hundreds of independent GLB parts will be edited. Type part names or numbers into the **Find part** field to filter large assemblies, then select by tapping or the dropdown.
 
@@ -12,13 +12,20 @@ v0.8 enlarges the **actual 3D and 2D touch targets** rather than merely the surr
 
 v0.8.1 addresses washed-out Clay mode: a non-exported **studio inspection shader** uses geometric triangle normals as a fallback for inconsistent imported vertex normals, stronger key/fill contrast, a restrained specular band, and an adjustable LIGHT direction (large left/right buttons). **SHOW FACETS** enables plane-normal inspection; toggle it off to favor the original smooth normals. **The amber selected-part tint is suppressed in Clay**, leaving its clear 3D bounding outline so body shapes are visible. The true material and selection tint return when Clay is switched off. The shading is analytical rather than physically accurate PBR, and it cannot reveal geometry that is not present in the mesh.
 
-The phone-first interface provides four context-sensitive pages. The model stays visible while editing; touch targets are deliberately large. The 3D view fills wide and narrow Android displays without fixed-aspect black bars.
+**v0.9:** The native Android editor now has a dedicated BUILD tab. Add independent BOX, CYLINDER, SPHERE and CAPSULE objects, assign custom part names, apply X/Y/Z dimensions in local GLB units, duplicate editable components, and delete/restore parts with undo. Every piece is real 3D geometry included in exported GLB models. Resizing uses per-part local transform scale, not destructive re-topology or CAD shell generation. Rotated objects may have a larger world-space bounding box than the entered local-axis dimensions. Import/export validation covers new geometry.
+
+**v0.9 picking fix:** Shape tap selection ray-tests **the frontmost visible triangle** and restricts the selected vertex to the three vertices of that face. This prevents selecting projected points through the outer body into an internal part. For dense meshes, touch raycasts still run CPU triangle checks and may need a cached BVH in a future release.
+
+**v0.9 textured preview:** View removes the amber tint while retaining the selection outline. Subdued ambient illumination plus separated key and fill lights restores more visible body shading; **TEXTURE CONTRAST** slider and SOFTER/MORE DEPTH buttons adjust only the editor lighting, not GLB materials. This cannot invent detail or repair wrong normals or missing maps.
+
+The phone-first interface provides five context-sensitive pages. The model stays visible while editing; touch targets are deliberately large. The 3D view fills wide and narrow Android displays without fixed-aspect black bars.
 
 | Page | Your task | Primary tools |
 | --- | --- | --- |
 | **SHAPE** | Refine body curvature | Search by part name/number, clearly highlight the selected part, then select a vertex; arm EDIT POINTS deliberately; choose ROUND BRUSH, BODY SECTION, or KEEP HARD EDGES with adjustable radius, MIRROR X and SMOOTH |
 | **MOVE** | Assemble independently engineered components | Drag large colored **3D gizmo handles on the model**: red X, green Y, blue Z. Tap a component to select it; switch between WHOLE PART, SELECTED POINT, and WHOLE MODEL, or use precision XYZ buttons, rotation and scale |
 | **VIEW** | Inspect geometry and form | FIT ALL, FOCUS PART, FRONT/SIDE/TOP/3/4; triangle-edge WIREFRAME, material-neutral CLAY, **ZEBRA STRIPES** with adjustable band count, SOLO PART, SHOW ALL, reference photo |
+| **BUILD** | Extend the actual 3D model | Add independent solids, enter exact dimensions, resize chosen parts, duplicate components or undo-delete parts |
 | **FILES** | Protect and share your work | OPEN GLB, EXPORT GLB, SAVE DRAFT, RESTORE DRAFT, import reference photo, demo model and help |
 
 The top bar always exposes **OPEN**, **EXPORT GLB**, **UNDO** and **REDO**. A project label displays the active model and whether it has unsaved changes.
@@ -55,7 +62,7 @@ The amber selection tint and 3D bounding outline are also inspection-only and ex
 Open the [Model Forge Android build workflow](https://github.com/tpylman90-ctrl/Model-forge/actions/workflows/android.yml), select a successful run, and download its `ModelForge-Android-APK` artifact. Extract the ZIP and install the APK on your phone. Debug keys may change between CI runs, requiring uninstall of older debug builds.
 
 ### Important limitations
-- v0.8.1 is still an experimental **vertex/part editor**, not complete polygon, automotive Class-A, or subdivision modeling software. Edge-loop insertion, face extrusion, bevel tools, UV edits, advanced material editing, skinning, animation preservation and sculpting remain future work.
+- v0.9 is still an experimental **vertex/part editor**, not complete polygon, automotive Class-A, or subdivision modeling software. Edge-loop insertion, face extrusion, bevel tools, UV edits, advanced material editing, skinning, animation preservation and sculpting remain future work.
 - Godot's glTF importer/exporter may not preserve every GLB extension, animation, morph target, rig, metadata item, shader, custom material or LOD. Always back up source assets and re-open exported files for validation.
 - WHOLE MODEL changes the assembly's transform and is **not yet a multi-mesh soft sculpt**. BODY SECTION and SOFT SHAPE still operate on one selected mesh at a time.
 - The SOFT SHAPE radius is local to the selected mesh; if you want to affect multiple independent parts, edit those parts separately. Imported mesh symmetry depends on its local X=0 plane.
