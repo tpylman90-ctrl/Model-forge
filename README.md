@@ -2,13 +2,15 @@
 
 **Model Forge** is a free, MIT-licensed, native Android GLB geometry editor designed to make real 3D edits practical on a phone. It serves Neon Forge Racing vehicle work, but there are no vehicle-specific formats or paid dependencies.
 
-## Version 0.8 — finger-friendly editing controls
+## Version 0.8.1 — Studio Clay for readable surface detail
 
 A selected component now has an **amber tinted surface and visible 3D bounding outline**, making it obvious which of hundreds of independent GLB parts will be edited. Type part names or numbers into the **Find part** field to filter large assemblies, then select by tapping or the dropdown.
 
 v0.7 introduced **frontmost-triangle part picking** in place of picking from overlapping bounding boxes, **normal-based simulated zebra reflection bands** for inspecting smooth body-panel transitions, and **swipeable horizontal tool rows** so even small phones can reach every command without hiding the model. These are viewport-only tools.
 
 v0.8 enlarges the **actual 3D and 2D touch targets** rather than merely the surrounding scroll rows: both sliders now have 56-pixel procedural high-contrast thumbs, thicker tracks, and at least 265×76 logical-pixel touch surfaces. Dropdowns, toggles, tabs, numeric fields and toolbar buttons have larger tap areas and fonts; dropdown popups have increased row separation. Shape Radius, Zebra Bands and Move Step each gain prominent **+/− buttons** as a precise alternative to tiny drag gestures. On-model XYZ grip spheres and touch tolerance are enlarged as well. Controls remain in sideways-swipeable strips so the editing viewport keeps adequate space.
+
+v0.8.1 addresses washed-out Clay mode: a non-exported **studio inspection shader** uses geometric triangle normals as a fallback for inconsistent imported vertex normals, stronger key/fill contrast, a restrained specular band, and an adjustable LIGHT direction (large left/right buttons). **SHOW FACETS** enables plane-normal inspection; toggle it off to favor the original smooth normals. **The amber selected-part tint is suppressed in Clay**, leaving its clear 3D bounding outline so body shapes are visible. The true material and selection tint return when Clay is switched off. The shading is analytical rather than physically accurate PBR, and it cannot reveal geometry that is not present in the mesh.
 
 The phone-first interface provides four context-sensitive pages. The model stays visible while editing; touch targets are deliberately large. The 3D view fills wide and narrow Android displays without fixed-aspect black bars.
 
@@ -53,7 +55,7 @@ The amber selection tint and 3D bounding outline are also inspection-only and ex
 Open the [Model Forge Android build workflow](https://github.com/tpylman90-ctrl/Model-forge/actions/workflows/android.yml), select a successful run, and download its `ModelForge-Android-APK` artifact. Extract the ZIP and install the APK on your phone. Debug keys may change between CI runs, requiring uninstall of older debug builds.
 
 ### Important limitations
-- v0.8 is still an experimental **vertex/part editor**, not complete polygon, automotive Class-A, or subdivision modeling software. Edge-loop insertion, face extrusion, bevel tools, UV edits, advanced material editing, skinning, animation preservation and sculpting remain future work.
+- v0.8.1 is still an experimental **vertex/part editor**, not complete polygon, automotive Class-A, or subdivision modeling software. Edge-loop insertion, face extrusion, bevel tools, UV edits, advanced material editing, skinning, animation preservation and sculpting remain future work.
 - Godot's glTF importer/exporter may not preserve every GLB extension, animation, morph target, rig, metadata item, shader, custom material or LOD. Always back up source assets and re-open exported files for validation.
 - WHOLE MODEL changes the assembly's transform and is **not yet a multi-mesh soft sculpt**. BODY SECTION and SOFT SHAPE still operate on one selected mesh at a time.
 - The SOFT SHAPE radius is local to the selected mesh; if you want to affect multiple independent parts, edit those parts separately. Imported mesh symmetry depends on its local X=0 plane.
