@@ -451,7 +451,7 @@ func _create_ui() -> void:
     contrast_row.add_child(texture_detail_slider)
     _button(contrast_row, "SOFTER", func(): _nudge_texture_detail(-0.15))
     _button(contrast_row, "MORE DEPTH", func(): _nudge_texture_detail(0.15))
-    _label(contrast_row, "Changes editor lighting only, not the GLB's real materials.", 16, MUTED)
+    _label(contrast_row, "HDR softbox reflections + filmic tone; tap LIGHT ◀/▶ to sweep reflections; original GLB materials stay unchanged.", 16, MUTED)
 
     # Files: clear separation between a private working draft and exported GLB.
     var file_row := _mobile_row(tool_panels[4])
@@ -847,10 +847,11 @@ func _sweep_clay_light(delta: float) -> void:
     clay_light_angle = wrapf(clay_light_angle + delta, -PI, PI)
     if clay_material != null:
         clay_material.set_shader_parameter("light_azimuth", clay_light_angle)
-    if not clay_enabled:
-        _notify("Turn on CLAY to view the light sweep.")
-    else:
-        _notify("Clay key light: %.0f°" % rad_to_deg(clay_light_angle))
+    if studio_key != null:
+        studio_key.rotation_degrees.y = 35.0 + rad_to_deg(clay_light_angle - 0.45)
+    if studio_rim != null:
+        studio_rim.rotation_degrees.y = 150.0 + rad_to_deg(clay_light_angle - 0.45)
+    _notify("Clay light sweep: %.0f°" % rad_to_deg(clay_light_angle) if clay_enabled else "Studio light rotated • inspect shifting hood and canopy highlights")
 
 func _set_clay(enabled: bool) -> void:
     if clay_enabled == enabled:
@@ -1984,24 +1985,34 @@ func _update_marker() -> void:
 func _frame_model() -> void:
     if mesh_nodes.is_empty():
         return
-    var bounds := AABB()
-    var found := false
-    for instance in mesh_nodes:
-        var local_bounds: AABB = instance.get_aabb()
+    # World-space bounds include every independently transformed part.
+    var bounds: AABB = _part_world_bounds(mesh_nodes)
+    orbit_center = bounds.get_center()
+    # Update camera orientation first, then fit to its *projected* x/y extents.
+    # Bounding-box diagonal * 1.15 left long low cars tiny in the viewport.
+    _update_camera()
+    var viewport_dimensions: Vector2 = Vector2(scene_view.size)
+    var aspect: float = maxf(viewport_dimensions.x / maxf(viewport_dimensions.y, 1.0), 0.35)
+    var tangent_y: float = tan(deg_to_rad(camera.fov) * 0.5)
+    var tangent_x: float = tangent_y * aspect
+    var orientation: Basis = camera.global_transform.basis
+    var needed: float = 0.35
+    for part in mesh_nodes:
+        if not is_instance_valid(part) or part.mesh == null:
+            continue
+        var box: AABB = part.get_aabb()
         for x in [0.0, 1.0]:
             for y in [0.0, 1.0]:
                 for z in [0.0, 1.0]:
-                    var corner: Vector3 = instance.to_global(local_bounds.position + local_bounds.size * Vector3(x, y, z))
-                    if not found:
-                        bounds = AABB(corner, Vector3.ZERO)
-                        found = true
-                    else:
-                        bounds = bounds.expand(corner)
-    if found:
-        orbit_center = bounds.get_center()
-        orbit_distance = clampf(bounds.size.length() * 1.15, 2.0, 900.0)
-        _update_camera()
-        _update_marker()
+                    var pos: Vector3 = part.to_global(box.position + box.size * Vector3(x, y, z)) - orbit_center
+                    var projected_x: float = pos.dot(orientation.x)
+                    var projected_y: float = pos.dot(orientation.y)
+                    var projected_z: float = pos.dot(orientation.z)
+                    needed = maxf(needed, projected_z + absf(projected_x) / tangent_x)
+                    needed = maxf(needed, projected_z + absf(projected_y) / tangent_y)
+    orbit_distance = clampf(needed * 1.18, 0.50, 900.0)
+    _update_camera()
+    _update_marker()
 
 func _update_camera() -> void:
     orbit_pitch = clampf(orbit_pitch, -1.40, 1.40)
