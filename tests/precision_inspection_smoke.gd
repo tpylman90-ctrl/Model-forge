@@ -75,7 +75,7 @@ func _run() -> void:
         _fail("Depth-correct triangle selection ignored frontmost mesh")
         return
 
-    app._show_tab(2)
+    app._show_tab(3)
     var old_front: Material = front.material_override
     var old_rear: Material = rear.material_override
     app._set_zebra(true)
