@@ -455,6 +455,189 @@ func _create_ui() -> void:
     add_child(help_dialog)
     _show_tab(0)
 
+func _build_dimension_field(row: HBoxContainer, caption: String) -> SpinBox:
+    _label(row, caption, 17, MUTED)
+    var spin := SpinBox.new()
+    spin.min_value = 0.01
+    spin.max_value = 10000.0
+    spin.step = 0.01
+    spin.value = 1.0
+    spin.custom_minimum_size = Vector2(205, 76)
+    row.add_child(spin)
+    return spin
+
+func _texture_detail_changed(value: float) -> void:
+    texture_detail_level = clampf(value, 0.0, 1.0)
+    _apply_texture_detail()
+
+func _nudge_texture_detail(delta: float) -> void:
+    texture_detail_slider.value = clampf(texture_detail_slider.value + delta, 0.0, 1.0)
+
+func _apply_texture_detail() -> void:
+    # Lighting-only (no model material rewrite). Broad fill conceals normals;
+    # directional key/fill separation exposes real panel curvature.
+    if scene_environment == null or studio_key == null or studio_fill == null:
+        return
+    scene_environment.ambient_light_energy = lerpf(0.70, 0.22, texture_detail_level)
+    studio_key.light_energy = lerpf(1.15, 1.65, texture_detail_level)
+    studio_fill.light_energy = lerpf(0.55, 0.19, texture_detail_level)
+
+func _desired_dimensions() -> Vector3:
+    return Vector3(float(build_width.value), float(build_height.value), float(build_length.value))
+
+func _part_local_dimensions(part: MeshInstance3D) -> Vector3:
+    if part == null or part.mesh == null:
+        return Vector3.ZERO
+    var dims: Vector3 = part.get_aabb().size
+    return Vector3(dims.x * absf(part.scale.x), dims.y * absf(part.scale.y), dims.z * absf(part.scale.z))
+
+func _update_dimensions_fields() -> void:
+    if build_width == null or build_height == null or build_length == null:
+        return
+    if edit.target == null or edit.target.mesh == null:
+        return
+    var dims: Vector3 = _part_local_dimensions(edit.target)
+    for target_field in [[build_width, dims.x], [build_height, dims.y], [build_length, dims.z]]:
+        var field: SpinBox = target_field[0]
+        field.set_value_no_signal(maxf(float(target_field[1]), 0.01))
+    if build_size_label != null:
+        build_size_label.text = "Selected %s: %.3f × %.3f × %.3f (local GLB units)" % [
+            edit.target.name, dims.x, dims.y, dims.z
+        ]
+
+func _apply_part_dimensions() -> void:
+    var part: MeshInstance3D = _selected_part()
+    if part == null or part.mesh == null:
+        _notify("Choose a part to dimension.")
+        return
+    var current: Vector3 = _part_local_dimensions(part)
+    if minf(current.x, minf(current.y, current.z)) <= 0.000001:
+        _notify("Cannot dimension a zero-thickness axis. Use a solid primitive.")
+        return
+    var desired: Vector3 = _desired_dimensions()
+    if minf(desired.x, minf(desired.y, desired.z)) < 0.01:
+        _notify("Dimensions must be at least 0.01 GLB units.")
+        return
+    var factor: Vector3 = desired / current
+    if factor.is_equal_approx(Vector3.ONE):
+        return
+    var before: Transform3D = part.transform
+    part.scale *= factor
+    _push_history({"kind":"part", "node":part, "before":before, "after":part.transform})
+    _mark_dirty()
+    _geometry_changed()
+    _update_dimensions_fields()
+    _notify("Sized %s to X %.2f / Y %.2f / Z %.2f GLB units." % [part.name, desired.x, desired.y, desired.z])
+
+func _new_mesh_material() -> StandardMaterial3D:
+    var material := StandardMaterial3D.new()
+    material.albedo_color = Color("#4b778a")
+    material.metallic = 0.46
+    material.roughness = 0.38
+    return material
+
+func _add_object() -> void:
+    var part := MeshInstance3D.new()
+    var new_mesh: PrimitiveMesh
+    match build_kind_picker.selected:
+        1:
+            new_mesh = CylinderMesh.new()
+        2:
+            new_mesh = SphereMesh.new()
+        3:
+            new_mesh = CapsuleMesh.new()
+        _:
+            new_mesh = BoxMesh.new()
+    new_mesh.material = _new_mesh_material()
+    part.mesh = new_mesh
+    build_counter += 1
+    var requested_name: String = build_name.text.strip_edges()
+    part.name = requested_name if not requested_name.is_empty() else "%s_%03d" % [
+        ["Box","Cylinder","Sphere","Capsule"][build_kind_picker.selected], build_counter
+    ]
+    var raw: Vector3 = part.get_aabb().size
+    var desired: Vector3 = _desired_dimensions()
+    part.scale = Vector3(
+        desired.x / maxf(raw.x, 0.0001),
+        desired.y / maxf(raw.y, 0.0001),
+        desired.z / maxf(raw.z, 0.0001)
+    )
+    # Add at the camera's current orbit target so newly created parts are seen.
+    part.position = asset_host.to_local(orbit_center)
+    _register_added_part(part, asset_host, true)
+    build_name.text = ""
+    _notify("Added editable %s. Use MOVE for XYZ placement or BUILD for exact dimensions." % part.name)
+
+func _duplicate_selected_part() -> void:
+    var original: MeshInstance3D = _selected_part()
+    if original == null or original.mesh == null:
+        _notify("Select a part to duplicate.")
+        return
+    var parent: Node3D = original.get_parent() as Node3D
+    if parent == null:
+        return
+    var new_part := MeshInstance3D.new()
+    new_part.name = original.name + "_Copy"
+    new_part.mesh = original.mesh.duplicate(true) as Mesh
+    new_part.transform = original.transform
+    new_part.position.x += maxf(0.10, original.get_aabb().size.x * 0.15)
+    if previous_overrides.has(original):
+        new_part.material_override = previous_overrides[original]
+    elif zebra_overrides.has(original):
+        new_part.material_override = zebra_overrides[original]
+    else:
+        new_part.material_override = original.material_override
+    _register_added_part(new_part, parent, true)
+    _notify("Duplicated %s; move the copy with XYZ handles." % original.name)
+
+func _register_added_part(part: MeshInstance3D, parent: Node3D, add_to_history: bool) -> void:
+    parent.add_child(part)
+    mesh_nodes.append(part)
+    _refresh_part_picker()
+    _choose_mesh(mesh_nodes.size() - 1)
+    if clay_enabled:
+        previous_overrides[part] = part.material_override
+        part.material_override = clay_material
+    elif zebra_enabled:
+        zebra_overrides[part] = part.material_override
+        part.material_override = zebra_material
+    if add_to_history:
+        _push_history({"kind":"create", "node":part, "parent":parent})
+        _mark_dirty()
+    _geometry_changed()
+
+func _detach_part(part: MeshInstance3D) -> void:
+    if part == null or not is_instance_valid(part) or part.get_parent() == null:
+        return
+    _show_all_parts()
+    _clear_selection_highlight()
+    previous_overrides.erase(part)
+    zebra_overrides.erase(part)
+    editor_by_mesh.erase(part)
+    var previous_index: int = mesh_nodes.find(part)
+    mesh_nodes.erase(part)
+    part.get_parent().remove_child(part)
+    selected_mesh_index = -1
+    _refresh_part_picker()
+    if not mesh_nodes.is_empty():
+        _choose_mesh(clampi(previous_index, 0, mesh_nodes.size() - 1))
+    else:
+        edit.set_target(null)
+        _geometry_changed()
+
+func _delete_selected_part() -> void:
+    var part: MeshInstance3D = _selected_part()
+    if part == null:
+        _notify("Select a part to delete.")
+        return
+    var parent: Node3D = part.get_parent() as Node3D
+    if parent == null:
+        return
+    _detach_part(part)
+    _push_history({"kind":"delete", "node":part, "parent":parent})
+    _mark_dirty()
+    _notify("Deleted part (UNDO restores it).")
+
 func _show_tab(index: int) -> void:
     # Switching tools must never leave a 3D drag captured.
     if gizmo_drag_active:
