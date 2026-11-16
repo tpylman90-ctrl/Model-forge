@@ -2,6 +2,7 @@ extends Control
 ## Model Forge v0.7: precise part picking, zebra inspection and scrollable phone tools.
 const MeshEdit = preload("res://scripts/mesh_editor.gd")
 const AxisGizmo = preload("res://scripts/axis_gizmo.gd")
+const StudioRig = preload("res://scripts/studio_rig.gd")
 const DARK := Color("#101924")
 const PANEL := Color("#162231")
 const ACCENT := Color("#3ddbc1")
@@ -45,6 +46,12 @@ var clay_light_angle: float = 0.45
 var scene_environment: Environment
 var studio_key: DirectionalLight3D
 var studio_fill: DirectionalLight3D
+var studio_rim: DirectionalLight3D
+var studio_toggle: CheckButton
+var high_quality_toggle: CheckButton
+var grid_toggle: CheckButton
+var studio_enabled: bool = true
+var studio_sky: Sky
 var texture_detail_slider: HSlider
 var texture_detail_level: float = 0.70
 var build_kind_picker: OptionButton
@@ -418,6 +425,21 @@ func _create_ui() -> void:
     _button(build_info, "BACK TO MOVE", func(): _show_tab(1))
 
     var contrast_row := _mobile_row(tool_panels[3])
+    studio_toggle = CheckButton.new()
+    studio_toggle.text = "STUDIO PBR"
+    studio_toggle.button_pressed = true
+    studio_toggle.toggled.connect(_set_studio)
+    contrast_row.add_child(studio_toggle)
+    high_quality_toggle = CheckButton.new()
+    high_quality_toggle.text = "4× AA"
+    high_quality_toggle.toggled.connect(_set_high_quality)
+    contrast_row.add_child(high_quality_toggle)
+    grid_toggle = CheckButton.new()
+    grid_toggle.text = "GRID"
+    grid_toggle.button_pressed = false
+    grid_toggle.toggled.connect(_set_grid)
+    contrast_row.add_child(grid_toggle)
+    _button(contrast_row, "FIT CLOSE", _frame_model)
     _label(contrast_row, "TEXTURE CONTRAST", 18, ACCENT)
     texture_detail_slider = HSlider.new()
     texture_detail_slider.min_value = 0.0
@@ -473,14 +495,54 @@ func _texture_detail_changed(value: float) -> void:
 func _nudge_texture_detail(delta: float) -> void:
     texture_detail_slider.value = clampf(texture_detail_slider.value + delta, 0.0, 1.0)
 
+func _set_grid(enabled: bool) -> void:
+    if grid_node != null:
+        grid_node.visible = enabled
+
+func _set_high_quality(enabled: bool) -> void:
+    if scene_view != null:
+        scene_view.msaa_3d = Viewport.MSAA_4X if enabled else Viewport.MSAA_2X
+    if status_label != null:
+        _notify("4× edge smoothing enabled (uses more GPU)" if enabled else "2× edge smoothing enabled")
+
+func _set_studio(enabled: bool) -> void:
+    studio_enabled = enabled
+    _apply_texture_detail()
+    if status_label != null:
+        _notify("Studio reflections enabled; model textures unchanged" if enabled else "Basic low-cost lighting enabled")
+
 func _apply_texture_detail() -> void:
-    # Lighting-only (no model material rewrite). Broad fill conceals normals;
-    # directional key/fill separation exposes real panel curvature.
+    # Changes *editor lighting only*; imported GLB textures and materials
+    # are never modified. SKY is for specular IBL, COLOR for diffuse ambient
+    # so the slider continues to control cavity/midtone separation.
     if scene_environment == null or studio_key == null or studio_fill == null:
         return
-    scene_environment.ambient_light_energy = lerpf(0.70, 0.22, texture_detail_level)
-    studio_key.light_energy = lerpf(1.15, 1.65, texture_detail_level)
-    studio_fill.light_energy = lerpf(0.55, 0.19, texture_detail_level)
+    var strength: float = clampf(texture_detail_level, 0.0, 1.0)
+    if studio_enabled:
+        scene_environment.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+        scene_environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+        scene_environment.ambient_light_energy = lerpf(0.42, 0.16, strength)
+        studio_key.light_energy = lerpf(1.05, 1.45, strength)
+        studio_fill.light_energy = lerpf(0.38, 0.16, strength)
+        if studio_rim != null:
+            studio_rim.light_energy = lerpf(0.28, 0.52, strength)
+        scene_environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+        scene_environment.tonemap_exposure = 0.79
+        scene_environment.tonemap_white = 6.0
+        scene_environment.adjustment_enabled = true
+        scene_environment.adjustment_contrast = lerpf(1.04, 1.12, strength)
+        scene_environment.adjustment_saturation = 1.035
+    else:
+        scene_environment.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+        scene_environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+        scene_environment.ambient_light_energy = lerpf(0.65, 0.24, strength)
+        studio_key.light_energy = lerpf(1.15, 1.60, strength)
+        studio_fill.light_energy = lerpf(0.50, 0.20, strength)
+        if studio_rim != null:
+            studio_rim.light_energy = 0.0
+        scene_environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+        scene_environment.tonemap_exposure = 0.83
+        scene_environment.adjustment_enabled = false
 
 func _desired_dimensions() -> Vector3:
     return Vector3(float(build_width.value), float(build_height.value), float(build_length.value))
@@ -1030,6 +1092,9 @@ func _create_scene() -> void:
     scene_view.size = Vector2i(900, 600)
     scene_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
     scene_view.own_world_3d = true
+    # Native multisampling for cleaner cockpit/glass and hard-surface edges.
+    # The optional 4× switch is in VIEW, with 2× as the safe mobile default.
+    scene_view.msaa_3d = Viewport.MSAA_2X
     canvas.add_child(scene_view)
     scene_world = Node3D.new()
     scene_view.add_child(scene_world)
@@ -1052,15 +1117,30 @@ func _create_scene() -> void:
     scene_environment.background_color = Color("#1a2837")
     scene_environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
     scene_environment.ambient_light_color = Color("#b9c8d4")
+    # Reflect a real floating-point softbox panorama even though the
+    # backdrop stays a neutral dark editor color.
+    studio_sky = StudioRig.make_sky()
+    scene_environment.sky = studio_sky
     scene_world.add_child(env)
     studio_key = DirectionalLight3D.new()
+    studio_key.name = "Studio_Key"
     studio_key.rotation_degrees = Vector3(-43, 35, 0)
+    studio_key.light_color = Color(1.0, 0.95, 0.91)
+    studio_key.shadow_enabled = true
     scene_world.add_child(studio_key)
     studio_fill = DirectionalLight3D.new()
+    studio_fill.name = "Studio_Fill"
     studio_fill.rotation_degrees = Vector3(30, -115, 0)
+    studio_fill.light_color = Color(0.85, 0.93, 1.0)
     scene_world.add_child(studio_fill)
+    studio_rim = DirectionalLight3D.new()
+    studio_rim.name = "Studio_Rim"
+    studio_rim.rotation_degrees = Vector3(-12, 150, 0)
+    studio_rim.light_color = Color(0.86, 0.93, 1.0)
+    scene_world.add_child(studio_rim)
     _apply_texture_detail()
     _make_grid()
+    grid_node.visible = false
     marker = MeshInstance3D.new()
     marker.mesh = SphereMesh.new()
     var highlight := StandardMaterial3D.new()
@@ -1080,7 +1160,8 @@ func _create_scene() -> void:
     wire_preview.material_override = wiremat
     wire_preview.visible = false
     helpers.add_child(wire_preview)
-    # Non-exportable amber selection cue: transparent surface tint and world-space outline.
+    # Non-exportable amber selection cue: transparent tint and outline.
+    # In VIEW, only the outline remains, preserving original PBR highlights.
     selection_overlay_material = StandardMaterial3D.new()
     selection_overlay_material.albedo_color = Color(1.0, 0.67, 0.24, 0.09)
     selection_overlay_material.emission_enabled = false
