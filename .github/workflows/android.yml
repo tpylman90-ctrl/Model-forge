@@ -70,6 +70,9 @@ jobs:
       - name: Validate studio clay normals, material safety and highlight isolation
         shell: bash
         run: timeout --signal=SIGTERM --kill-after=5s 90s godot --headless --path . --script res://tests/clay_studio_smoke.gd
+      - name: Validate Build object creation, exact dimensions, textured lighting and occlusion-safe picking
+        shell: bash
+        run: timeout --signal=SIGTERM --kill-after=5s 90s godot --headless --path . --script res://tests/build_visible_surface_smoke.gd
       - name: Install Godot 4.5 Android SDK platform and build tools
         shell: bash
         run: |
