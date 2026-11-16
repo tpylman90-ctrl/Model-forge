@@ -97,9 +97,14 @@ func _run() -> void:
     if app.clay_enabled or a.material_override != old_a or b.material_override != old_b:
         _fail("Disabling Clay did not restore original part materials")
         return
-    if a.material_overlay != old_overlay:
-        _fail("Disabling Clay did not restore selected-part paint")
+    if a.material_overlay != null or not app.selection_outline.visible:
+        _fail("VIEW should preserve the outline without tinting the textured model")
         return
+    app._show_tab(0)
+    if a.material_overlay != old_overlay:
+        _fail("Shape tab did not restore its editable-part indicator")
+        return
+    app._show_tab(3)
     app._set_clay(true)
     app._set_zebra(true)
     if app.clay_enabled or not app.zebra_enabled:
