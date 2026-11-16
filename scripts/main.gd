@@ -39,7 +39,10 @@ var zebra_overrides: Dictionary = {}
 var zebra_band_count: float = 12.0
 var clay_enabled: bool = false
 var previous_overrides: Dictionary = {}
-var clay_material: StandardMaterial3D
+var clay_material: ShaderMaterial
+var clay_facets_toggle: CheckButton
+var clay_light_angle: float = 0.45
+var clay_facets_enabled: bool = true
 var isolate_active: bool = false
 var saved_visibility: Dictionary = {}
 const DRAFT_PATH := "user://model-forge-working-draft.glb"
@@ -341,6 +344,13 @@ func _create_ui() -> void:
     clay_toggle.text = "CLAY"
     clay_toggle.toggled.connect(_set_clay)
     view_row.add_child(clay_toggle)
+    clay_facets_toggle = CheckButton.new()
+    clay_facets_toggle.text = "SHOW FACETS"
+    clay_facets_toggle.button_pressed = true
+    clay_facets_toggle.toggled.connect(_clay_facets_changed)
+    view_row.add_child(clay_facets_toggle)
+    _button(view_row, "LIGHT ◀", func(): _sweep_clay_light(-0.35))
+    _button(view_row, "LIGHT ▶", func(): _sweep_clay_light(0.35))
     zebra_toggle = CheckButton.new()
     zebra_toggle.text = "ZEBRA STRIPES"
     zebra_toggle.toggled.connect(_set_zebra)
@@ -387,7 +397,7 @@ func _create_ui() -> void:
     status_label = _label(footer, "Model Forge ready", 15, MUTED)
     help_dialog = AcceptDialog.new()
     help_dialog.title = "Model Forge • Quick Guide"
-    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB or use the demo.\n2. SHAPE: search for a component in Find part, or tap a visible part in the model. The selected part gets an amber outline and tinted surface so you can identify it. Tap a point and enable EDIT POINTS to deform it.\n3. MOVE: choose SELECTED POINT, WHOLE PART, or WHOLE MODEL. WHOLE MODEL moves, rotates, and scales the entire assembly without changing vertex shapes. Use colored X/Y/Z drag handles or numeric buttons.\n4. SOFT SHAPE: Round Brush, Body Section or Keep Hard Edges, with adjustable radius and Mirror X.\n5. VIEW: use CLAY, WIREFRAME, SOLO PART, and HIGHLIGHT PART for inspection.\n6. FILES: SAVE DRAFT keeps one working copy. EXPORT GLB writes the complete geometry without selection visuals.\n\nPinch to zoom; two-finger drag pans. Whole-model mode is a rigid assembly transform, not a multi-part sculpt."
+    help_dialog.dialog_text = "MODEL FORGE — START HERE\n\n1. OPEN a GLB or use the demo.\n2. SHAPE: search for a component in Find part, or tap a visible part in the model. The selected part gets an amber outline and tinted surface so you can identify it. Tap a point and enable EDIT POINTS to deform it.\n3. MOVE: choose SELECTED POINT, WHOLE PART, or WHOLE MODEL. WHOLE MODEL moves, rotates, and scales the entire assembly without changing vertex shapes. Use colored X/Y/Z drag handles or numeric buttons.\n4. SOFT SHAPE: Round Brush, Body Section or Keep Hard Edges, with adjustable radius and Mirror X.\n5. VIEW: use STUDIO CLAY for high-contrast normal-based shading. SHOW FACETS emphasizes real polygon planes; LIGHT left/right sweeps reflections over details. Selection is outlined (not painted over) in Clay. WIREFRAME, ZEBRA and SOLO PART help inspect geometry.\n6. FILES: SAVE DRAFT keeps one working copy. EXPORT GLB writes the complete geometry without selection visuals.\n\nPinch to zoom; two-finger drag pans. Whole-model mode is a rigid assembly transform, not a multi-part sculpt."
     add_child(help_dialog)
     _show_tab(0)
 
@@ -525,20 +535,46 @@ func _focus_part() -> void:
     _update_marker()
     _notify("Focused on part: %s" % instance.name)
 
+func _clay_facets_changed(enabled: bool) -> void:
+    clay_facets_enabled = enabled
+    if clay_material != null:
+        clay_material.set_shader_parameter("facet_strength", 0.85 if enabled else 0.05)
+    _notify("Clay: visible polygon planes" if enabled else "Clay: smooth imported vertex normals")
+
+func _sweep_clay_light(delta: float) -> void:
+    clay_light_angle = wrapf(clay_light_angle + delta, -PI, PI)
+    if clay_material != null:
+        clay_material.set_shader_parameter("light_azimuth", clay_light_angle)
+    if not clay_enabled:
+        _notify("Turn on CLAY to view the light sweep.")
+    else:
+        _notify("Clay key light: %.0f°" % rad_to_deg(clay_light_angle))
+
 func _set_clay(enabled: bool) -> void:
     if clay_enabled == enabled:
         return
     if enabled and zebra_enabled:
         _set_zebra(false)
     if enabled:
-        clay_material = StandardMaterial3D.new()
-        clay_material.albedo_color = Color("#92969c")
-        clay_material.roughness = 0.32
-        clay_material.metallic = 0.15
+        # Amber paint across selected polygons hides the very details clay
+        # inspection must reveal; the separate amber outline remains visible.
+        _clear_selection_highlight()
+        if clay_material == null:
+            var studio_shader: Shader = load("res://shaders/clay_studio.gdshader")
+            if studio_shader == null:
+                _notify("Studio Clay shader unavailable; no materials changed.")
+                if clay_toggle != null:
+                    clay_toggle.set_pressed_no_signal(false)
+                return
+            clay_material = ShaderMaterial.new()
+            clay_material.shader = studio_shader
+        clay_material.set_shader_parameter("light_azimuth", clay_light_angle)
+        clay_material.set_shader_parameter("facet_strength", 0.85 if clay_facets_enabled else 0.05)
         previous_overrides.clear()
         for instance in mesh_nodes:
-            previous_overrides[instance] = instance.material_override
-            instance.material_override = clay_material
+            if is_instance_valid(instance):
+                previous_overrides[instance] = instance.material_override
+                instance.material_override = clay_material
     else:
         for instance in previous_overrides:
             if is_instance_valid(instance):
@@ -547,8 +583,9 @@ func _set_clay(enabled: bool) -> void:
     clay_enabled = enabled
     if clay_toggle != null:
         clay_toggle.set_pressed_no_signal(enabled)
+    _refresh_selection_highlight()
     if status_label != null:
-        _notify("Clay preview: material colors temporarily hidden." if enabled else "Original materials restored.")
+        _notify("Studio Clay: drag LIGHT ◀/▶ to sweep detail; SHOW FACETS toggles geometric normals." if enabled else "Original GLB materials restored.")
 
 func _zebra_bands_changed(value: float) -> void:
     zebra_band_count = value
@@ -1163,7 +1200,7 @@ func _refresh_selection_highlight() -> void:
         _clear_selection_highlight()
         return
     var whole_model := active_tab == 1 and _is_whole_model_mode()
-    var intended: MeshInstance3D = null if whole_model or zebra_enabled else edit.target
+    var intended: MeshInstance3D = null if whole_model or zebra_enabled or clay_enabled else edit.target
     if selected_overlay_mesh != intended:
         if selected_overlay_mesh != null and is_instance_valid(selected_overlay_mesh):
             selected_overlay_mesh.material_overlay = selected_original_overlay
