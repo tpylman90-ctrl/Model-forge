@@ -90,7 +90,7 @@ func _run() -> void:
         _fail("Drawer collapse reset editor tabs")
         return
 
-    var collapsed_yaw := app.orbit_yaw
+    var collapsed_yaw: float = app.orbit_yaw
     pad._gui_input(down)
     for i in range(6):
         app._process(1.0 / 60.0)
