@@ -11,7 +11,7 @@ func _run() -> void:
         return
     var app = scene.instantiate()
     root.add_child(app)
-    if app.tool_panels.size() != 4 or app.tab_buttons.size() != 4:
+    if app.tool_panels.size() != 5 or app.tab_buttons.size() != 5:
         _fail("four-tool layout not initialized")
         return
     for button in app.tab_buttons:
@@ -24,7 +24,7 @@ func _run() -> void:
     if app.edit_toggle.button_pressed:
         _fail("editor starts with accidental pull/edit mode armed")
         return
-    app._show_tab(2)
+    app._show_tab(3)
     if app.edit_toggle.button_pressed:
         _fail("view mode still edits vertices")
         return
