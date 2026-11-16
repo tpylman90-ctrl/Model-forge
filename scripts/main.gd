@@ -2051,56 +2051,61 @@ func _finish_gizmo_drag() -> void:
     gizmo_drag_vertex_editor = null
     _update_gizmo()
 
-func _ray_triangle_depth(instance: MeshInstance3D, ray_origin: Vector3, ray_direction: Vector3) -> float:
-    if instance.mesh == null:
-        return INF
+func _ray_triangle_hit(instance: MeshInstance3D, ray_origin: Vector3, ray_direction: Vector3) -> Dictionary:
+    if instance == null or not instance.visible or instance.mesh == null:
+        return {}
     var mesh: Mesh = instance.mesh
     var local_origin: Vector3 = instance.to_local(ray_origin)
     var local_direction: Vector3 = instance.global_transform.basis.inverse() * ray_direction
     if local_direction.length_squared() < 0.000000001:
-        return INF
+        return {}
     if instance.get_aabb().grow(0.02).intersects_ray(local_origin, local_direction) == null:
-        return INF
-    var nearest := INF
-    for s in range(mesh.get_surface_count()):
-        if mesh is ArrayMesh and mesh.surface_get_primitive_type(s) != Mesh.PRIMITIVE_TRIANGLES:
+        return {}
+    var closest := INF
+    var nearest: Dictionary = {}
+    for surface_index in range(mesh.get_surface_count()):
+        if mesh is ArrayMesh and mesh.surface_get_primitive_type(surface_index) != Mesh.PRIMITIVE_TRIANGLES:
             continue
-        var arrays: Array = mesh.surface_get_arrays(s)
-        if arrays.size() <= Mesh.ARRAY_VERTEX or arrays[Mesh.ARRAY_VERTEX] == null:
+        var data: Array = mesh.surface_get_arrays(surface_index)
+        if data.size() <= Mesh.ARRAY_VERTEX or data[Mesh.ARRAY_VERTEX] == null:
             continue
-        var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-        var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
-        var triangle_count: int = (indices.size() if not indices.is_empty() else vertices.size()) / 3
-        for t in range(triangle_count):
-            var start: int = t * 3
-            var ia: int = indices[start] if not indices.is_empty() else start
-            var ib: int = indices[start + 1] if not indices.is_empty() else start + 1
-            var ic: int = indices[start + 2] if not indices.is_empty() else start + 2
-            if ia >= vertices.size() or ib >= vertices.size() or ic >= vertices.size():
+        var vertices: PackedVector3Array = data[Mesh.ARRAY_VERTEX]
+        var indices: PackedInt32Array = data[Mesh.ARRAY_INDEX] if data[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+        var count: int = (indices.size() if not indices.is_empty() else vertices.size()) / 3
+        for triangle in range(count):
+            var t: int = triangle * 3
+            var ia: int = indices[t] if not indices.is_empty() else t
+            var ib: int = indices[t + 1] if not indices.is_empty() else t + 1
+            var ic: int = indices[t + 2] if not indices.is_empty() else t + 2
+            if ia < 0 or ib < 0 or ic < 0 or ia >= vertices.size() or ib >= vertices.size() or ic >= vertices.size():
                 continue
-            var hit: Variant = Geometry3D.ray_intersects_triangle(
+            var intersection: Variant = Geometry3D.ray_intersects_triangle(
                 local_origin, local_direction, vertices[ia], vertices[ib], vertices[ic]
             )
-            if hit is Vector3:
-                var world_hit: Vector3 = instance.to_global(hit)
-                var distance: float = (world_hit - ray_origin).dot(ray_direction)
-                if distance > camera.near * 0.5 and distance < nearest:
-                    nearest = distance
+            if intersection is Vector3:
+                var world_point: Vector3 = instance.to_global(intersection)
+                var depth: float = (world_point - ray_origin).dot(ray_direction)
+                if depth > camera.near * 0.5 and depth < closest:
+                    closest = depth
+                    nearest = {
+                        "node": instance, "surface": surface_index, "triangle": PackedInt32Array([ia, ib, ic]),
+                        "depth": depth, "world": world_point
+                    }
     return nearest
 
-func _pick_part(position: Vector2) -> bool:
+func _ray_triangle_depth(instance: MeshInstance3D, ray_origin: Vector3, ray_direction: Vector3) -> float:
+    var detail: Dictionary = _ray_triangle_hit(instance, ray_origin, ray_direction)
+    return float(detail["depth"]) if not detail.is_empty() else INF
+
+func _frontmost_triangle_at(position: Vector2) -> Dictionary:
     if mesh_nodes.is_empty():
-        return false
+        return {}
     var screen: Vector2 = _canvas_to_viewport(position)
     var ray_origin: Vector3 = camera.project_ray_origin(screen)
     var ray_direction: Vector3 = camera.project_ray_normal(screen)
     var candidates: Array = []
-    # Broad phase: AABB only rejects irrelevant meshes; never uses box depth
-    # as final picking proof. That used to select the wrong mesh when boxes
-    # overlapped around intricate cavities, wings, windows, and booster pods.
-    for i in range(mesh_nodes.size()):
-        var part: MeshInstance3D = mesh_nodes[i]
-        if not part.visible or part.mesh == null:
+    for part in mesh_nodes:
+        if not is_instance_valid(part) or not part.visible or part.mesh == null:
             continue
         var local_origin: Vector3 = part.to_local(ray_origin)
         var local_direction: Vector3 = part.global_transform.basis.inverse() * ray_direction
@@ -2109,27 +2114,32 @@ func _pick_part(position: Vector2) -> bool:
         var entry: Variant = part.get_aabb().grow(0.02).intersects_ray(local_origin, local_direction)
         if entry is Vector3:
             var entry_depth: float = (part.to_global(entry) - ray_origin).dot(ray_direction)
-            candidates.append({"index":i, "depth": maxf(entry_depth, 0.0)})
-    if candidates.is_empty():
-        return false
+            candidates.append({"part":part, "entry":maxf(entry_depth, 0.0)})
     candidates.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
-        return float(left["depth"]) < float(right["depth"]))
-    var nearest := INF
-    var selected := -1
-    for entry in candidates:
-        if float(entry["depth"]) > nearest + 0.02:
+        return float(left["entry"]) < float(right["entry"]))
+    var closest := INF
+    var best: Dictionary = {}
+    for candidate in candidates:
+        if float(candidate["entry"]) > closest + 0.02:
             break
-        var index: int = entry["index"]
-        var hit_distance: float = _ray_triangle_depth(mesh_nodes[index], ray_origin, ray_direction)
-        if hit_distance < nearest:
-            nearest = hit_distance
-            selected = index
-    if selected < 0:
+        var hit: Dictionary = _ray_triangle_hit(candidate["part"], ray_origin, ray_direction)
+        if not hit.is_empty() and float(hit["depth"]) < closest:
+            closest = float(hit["depth"])
+            best = hit
+    return best
+
+func _pick_part(position: Vector2) -> bool:
+    var hit: Dictionary = _frontmost_triangle_at(position)
+    if hit.is_empty():
         return false
     if active_tab == 1 and _is_whole_model_mode():
-        _notify("WHOLE MODEL active. Switch to WHOLE PART to select individual pieces.")
+        _notify("WHOLE MODEL active. Switch to WHOLE PART for component selection.")
         return true
-    _choose_mesh(selected)
+    var part: MeshInstance3D = hit["node"]
+    var index: int = mesh_nodes.find(part)
+    if index < 0:
+        return false
+    _choose_mesh(index)
     return true
 
 func _canvas_input(event: InputEvent) -> void:
@@ -2253,12 +2263,7 @@ func _pointer_end() -> void:
         if active_tab == 1:
             _pick_part(pointer_origin)
         elif active_tab == 0:
-            # Prefer the frontmost triangle's owning mesh over arbitrary
-            # vertices projected through a different object's surface.
-            if _pick_part(pointer_origin):
-                _pick_vertex(pointer_origin)
-            else:
-                _pick_vertex(pointer_origin)
+            _pick_vertex(pointer_origin)
             _update_marker()
     if pointer_dragging_vertex:
         # The final position is committed even if drag throttling skipped a frame.
@@ -2291,33 +2296,40 @@ func _notification(what: int) -> void:
         last_pinch_midpoint = Vector2.ZERO
 
 func _pick_vertex(position: Vector2) -> bool:
-    if edit.target == null:
+    # Only choose among the three real vertices of the FRONTMOST face under
+    # the finger. Projecting all mesh vertices previously picked hidden
+    # interior or far-side points through the exterior shell.
+    var hit: Dictionary = _frontmost_triangle_at(position)
+    if hit.is_empty():
         return false
-    var viewport_size := Vector2(scene_view.size)
-    var canvas_size := canvas.size
-    var mapped := position * viewport_size / Vector2(maxf(canvas_size.x, 1), maxf(canvas_size.y, 1))
-    var best_distance := 30.0
-    var best_depth := INF
-    var best_s := -1
-    var best_v := -1
-    for s in range(edit.surfaces.size()):
-        var vertices: PackedVector3Array = edit.surfaces[s]["arrays"][Mesh.ARRAY_VERTEX]
-        var stride := maxi(1, ceili(float(vertices.size()) / 30000.0))
-        for i in range(0, vertices.size(), stride):
-            var world: Vector3 = edit.target.to_global(vertices[i])
-            if camera.is_position_behind(world):
-                continue
-            var point := camera.unproject_position(world)
-            var dist := point.distance_to(mapped)
-            var depth := camera.global_position.distance_squared_to(world)
-            if dist <= best_distance and (dist < best_distance - 1.0 or depth < best_depth):
-                best_distance = dist
-                best_depth = depth
-                best_s = s
-                best_v = i
-    if best_s < 0:
+    var part: MeshInstance3D = hit["node"]
+    if part != edit.target:
+        var index: int = mesh_nodes.find(part)
+        if index < 0:
+            return false
+        _choose_mesh(index)
+    if edit.target != part:
         return false
-    return edit.select_vertex(best_s, best_v)
+    var surface: int = int(hit["surface"])
+    if surface < 0 or surface >= edit.surfaces.size():
+        return false
+    var face: PackedInt32Array = hit["triangle"]
+    var positions: PackedVector3Array = edit.surfaces[surface]["arrays"][Mesh.ARRAY_VERTEX]
+    var mapped: Vector2 = _canvas_to_viewport(position)
+    var nearest := INF
+    var point_index := -1
+    for vertex_index in face:
+        if vertex_index < 0 or vertex_index >= positions.size():
+            continue
+        var point_world: Vector3 = part.to_global(positions[vertex_index])
+        var point_screen: Vector2 = camera.unproject_position(point_world)
+        var dist: float = point_screen.distance_squared_to(mapped)
+        if dist < nearest:
+            nearest = dist
+            point_index = vertex_index
+    if point_index < 0:
+        return false
+    return edit.select_vertex(surface, point_index)
 
 func _create_demo() -> void:
     if dirty and asset_host.get_child_count() > 0:
