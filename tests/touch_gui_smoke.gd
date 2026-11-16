@@ -48,7 +48,7 @@ func _run() -> void:
         _fail("Mouse tap did not switch to MOVE; active=" + str(app.active_tab))
         return
 
-    var view_button: Button = app.tab_buttons[2]
+    var view_button: Button = app.tab_buttons[3]
     bounds = view_button.get_global_rect()
     down.position = bounds.get_center()
     up.position = bounds.get_center()
@@ -56,7 +56,7 @@ func _run() -> void:
     await process_frame
     root.push_input(up, true)
     await process_frame
-    if app.active_tab != 2:
+    if app.active_tab != 3:
         _fail("Mouse tap did not switch to VIEW; active=" + str(app.active_tab))
         return
     if app.pointer_down or app.pointer_dragging_vertex:
