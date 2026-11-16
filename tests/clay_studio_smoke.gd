@@ -26,7 +26,7 @@ func _run() -> void:
     if old_overlay != app.selection_overlay_material:
         _fail("Selected part is not highlighted before Clay")
         return
-    app._show_tab(2)
+    app._show_tab(3)
     app._set_clay(true)
     if not app.clay_enabled or app.clay_material == null:
         _fail("Studio Clay did not activate")
