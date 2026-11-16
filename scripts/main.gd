@@ -42,6 +42,18 @@ var previous_overrides: Dictionary = {}
 var clay_material: ShaderMaterial
 var clay_facets_toggle: CheckButton
 var clay_light_angle: float = 0.45
+var scene_environment: Environment
+var studio_key: DirectionalLight3D
+var studio_fill: DirectionalLight3D
+var texture_detail_slider: HSlider
+var texture_detail_level: float = 0.70
+var build_kind_picker: OptionButton
+var build_name: LineEdit
+var build_width: SpinBox
+var build_height: SpinBox
+var build_length: SpinBox
+var build_size_label: Label
+var build_counter: int = 0
 var clay_facets_enabled: bool = true
 var isolate_active: bool = false
 var saved_visibility: Dictionary = {}
@@ -121,7 +133,7 @@ func _ready() -> void:
     _notify("Ready. Select a part, then tap a point or use MOVE.")
 
 func _create_ui() -> void:
-    # Four large tool tabs replace the two cramped permanent sidebars.
+    # Five task-specific, swipeable native Android tool tabs.
     var whole := VBoxContainer.new()
     whole.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     whole.add_theme_constant_override("separation", 0)
@@ -195,14 +207,14 @@ func _create_ui() -> void:
     var tabs := HBoxContainer.new()
     tabs.add_theme_constant_override("separation", 8)
     stack.add_child(tabs)
-    for tab_name in ["SHAPE", "MOVE", "VIEW", "FILES"]:
+    for tab_name in ["SHAPE", "MOVE", "BUILD", "VIEW", "FILES"]:
         var index: int = tab_buttons.size()
         var tab := _button(tabs, tab_name, func(): _show_tab(index))
         tab_buttons.append(tab)
     var pages := Control.new()
     pages.custom_minimum_size.y = 266
     stack.add_child(pages)
-    for i in range(4):
+    for i in range(5):
         var page := VBoxContainer.new()
         page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
         page.add_theme_constant_override("separation", 8)
@@ -328,14 +340,14 @@ func _create_ui() -> void:
     _label(move_settings, "RED X • GREEN Y • BLUE Z: drag to move. WHOLE MODEL moves every part.", 15, ACCENT)
 
     # View: preset cameras, wireframe inspection and orbit-only mode.
-    var views := _mobile_row(tool_panels[2])
+    var views := _mobile_row(tool_panels[3])
     _button(views, "FIT ALL", _frame_model)
     _button(views, "FOCUS PART", _focus_part)
     _button(views, "FRONT", func(): _preset_view(0))
     _button(views, "SIDE", func(): _preset_view(1))
     _button(views, "TOP", func(): _preset_view(2))
     _button(views, "3/4", func(): _preset_view(3))
-    var view_row := _mobile_row(tool_panels[2])
+    var view_row := _mobile_row(tool_panels[3])
     wire_toggle = CheckButton.new()
     wire_toggle.text = "WIREFRAME"
     wire_toggle.toggled.connect(_wire_changed)
@@ -377,13 +389,55 @@ func _create_ui() -> void:
     _button(view_row, "NORMALS", _recalculate_normals)
     _label(view_row, "Drag = rotate • pinch = zoom • two-finger drag = pan", 15, MUTED)
 
+    # BUILD: true independent editable meshes and exact local-axis sizing.
+    var build_create := _mobile_row(tool_panels[2])
+    _label(build_create, "CREATE PART", 18, ACCENT)
+    build_kind_picker = OptionButton.new()
+    for primitive_name in ["BOX", "CYLINDER", "SPHERE", "CAPSULE"]:
+        build_kind_picker.add_item(primitive_name)
+    build_create.add_child(build_kind_picker)
+    build_name = LineEdit.new()
+    build_name.placeholder_text = "New part name"
+    build_name.custom_minimum_size.x = 235
+    build_create.add_child(build_name)
+    _button(build_create, "+ ADD OBJECT", _add_object)
+    _button(build_create, "DUPLICATE", _duplicate_selected_part)
+    _button(build_create, "DELETE PART", _delete_selected_part)
+
+    var dimension_row := _mobile_row(tool_panels[2])
+    _label(dimension_row, "SIZE  (GLB units)", 18, ACCENT)
+    build_width = _build_dimension_field(dimension_row, "X WIDTH")
+    build_height = _build_dimension_field(dimension_row, "Y HEIGHT")
+    build_length = _build_dimension_field(dimension_row, "Z LENGTH")
+    _button(dimension_row, "APPLY SIZE", _apply_part_dimensions)
+    _button(dimension_row, "READ PART", _update_dimensions_fields)
+
+    var build_info := _mobile_row(tool_panels[2])
+    build_size_label = _label(build_info, "Select a part to resize, or enter dimensions to create an object.", 18, MUTED)
+    _button(build_info, "FOCUS PART", _focus_part)
+    _button(build_info, "BACK TO MOVE", func(): _show_tab(1))
+
+    var contrast_row := _mobile_row(tool_panels[3])
+    _label(contrast_row, "TEXTURE CONTRAST", 18, ACCENT)
+    texture_detail_slider = HSlider.new()
+    texture_detail_slider.min_value = 0.0
+    texture_detail_slider.max_value = 1.0
+    texture_detail_slider.step = 0.05
+    texture_detail_slider.value = texture_detail_level
+    texture_detail_slider.custom_minimum_size.x = 280.0
+    texture_detail_slider.value_changed.connect(_texture_detail_changed)
+    contrast_row.add_child(texture_detail_slider)
+    _button(contrast_row, "SOFTER", func(): _nudge_texture_detail(-0.15))
+    _button(contrast_row, "MORE DEPTH", func(): _nudge_texture_detail(0.15))
+    _label(contrast_row, "Changes editor lighting only, not the GLB's real materials.", 16, MUTED)
+
     # Files: clear separation between a private working draft and exported GLB.
-    var file_row := _mobile_row(tool_panels[3])
+    var file_row := _mobile_row(tool_panels[4])
     _button(file_row, "OPEN GLB", _request_open_glb)
     _button(file_row, "EXPORT GLB", _request_save_glb)
     _button(file_row, "SAVE DRAFT", _save_draft)
     _button(file_row, "RESTORE DRAFT", _restore_draft)
-    var more_buttons := _mobile_row(tool_panels[3])
+    var more_buttons := _mobile_row(tool_panels[4])
     _button(more_buttons, "LOAD PHOTO", _request_reference)
     _button(more_buttons, "SHOW PHOTO", _toggle_reference)
     _button(more_buttons, "DEMO MODEL", _create_demo)
@@ -419,10 +473,11 @@ func _show_tab(index: int) -> void:
     _update_marker()
     if status_label != null:
         var messages := [
-            "SHAPE • Choose a part; tap a point; enable EDIT POINTS to drag.",
-            "MOVE • Highlighted selection, or WHOLE MODEL to transform all parts.",
-            "VIEW • Camera angles, wireframe, part isolation and reference photo.",
-            "FILES • Open, export, save/restore a draft, load a reference image."
+            "SHAPE • Tap visible frontmost triangles to pick exterior vertices.",
+            "MOVE • Place one component or WHOLE MODEL using XYZ handles.",
+            "BUILD • Add, duplicate or delete parts; enter exact X/Y/Z dimensions.",
+            "VIEW • Texture contrast, Clay, Zebra and camera angles.",
+            "FILES • Open, export, save or restore a private draft."
         ]
         _notify(messages[index])
 
@@ -443,6 +498,8 @@ func _update_touch_hint() -> void:
         touch_hint.text = "EDIT MODE • Drag a point to pull • Switch EDIT POINTS off to orbit"
     elif active_tab == 0:
         touch_hint.text = "SHAPE • Tap a point to select • EDIT POINTS ON to reshape • Drag to orbit while OFF"
+    elif active_tab == 2:
+        touch_hint.text = "BUILD • Add objects and dimension selected parts; edits affect real GLB geometry"
     elif active_tab == 1:
         if _is_whole_model_mode():
             touch_hint.text = "WHOLE MODEL • All parts together • Drag RED X / GREEN Y / BLUE Z"
@@ -807,20 +864,19 @@ func _create_scene() -> void:
     scene_world.add_child(camera)
     var env := WorldEnvironment.new()
     env.environment = Environment.new()
-    env.environment.background_mode = Environment.BG_COLOR
-    env.environment.background_color = Color("#1a2837")
-    env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-    env.environment.ambient_light_color = Color("#cbdced")
-    env.environment.ambient_light_energy = 0.7
+    scene_environment = env.environment
+    scene_environment.background_mode = Environment.BG_COLOR
+    scene_environment.background_color = Color("#1a2837")
+    scene_environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+    scene_environment.ambient_light_color = Color("#b9c8d4")
     scene_world.add_child(env)
-    var sun := DirectionalLight3D.new()
-    sun.rotation_degrees = Vector3(-43, 35, 0)
-    sun.light_energy = 1.6
-    scene_world.add_child(sun)
-    var fill := DirectionalLight3D.new()
-    fill.rotation_degrees = Vector3(30, -115, 0)
-    fill.light_energy = 0.55
-    scene_world.add_child(fill)
+    studio_key = DirectionalLight3D.new()
+    studio_key.rotation_degrees = Vector3(-43, 35, 0)
+    scene_world.add_child(studio_key)
+    studio_fill = DirectionalLight3D.new()
+    studio_fill.rotation_degrees = Vector3(30, -115, 0)
+    scene_world.add_child(studio_fill)
+    _apply_texture_detail()
     _make_grid()
     marker = MeshInstance3D.new()
     marker.mesh = SphereMesh.new()
@@ -843,13 +899,11 @@ func _create_scene() -> void:
     helpers.add_child(wire_preview)
     # Non-exportable amber selection cue: transparent surface tint and world-space outline.
     selection_overlay_material = StandardMaterial3D.new()
-    selection_overlay_material.albedo_color = Color(1.0, 0.63, 0.16, 0.26)
-    selection_overlay_material.emission_enabled = true
-    selection_overlay_material.emission = Color("#ffaf41")
-    selection_overlay_material.emission_energy_multiplier = 0.22
+    selection_overlay_material.albedo_color = Color(1.0, 0.67, 0.24, 0.09)
+    selection_overlay_material.emission_enabled = false
     selection_overlay_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
     selection_overlay_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-    selection_overlay_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    selection_overlay_material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
     selection_outline = MeshInstance3D.new()
     selection_outline.name = "SelectedPartOutline"
     var edge_material := StandardMaterial3D.new()
@@ -1200,7 +1254,8 @@ func _refresh_selection_highlight() -> void:
         _clear_selection_highlight()
         return
     var whole_model := active_tab == 1 and _is_whole_model_mode()
-    var intended: MeshInstance3D = null if whole_model or zebra_enabled or clay_enabled else edit.target
+    # VIEW uses clean imported textures; the amber bounding outline alone identifies the part.
+    var intended: MeshInstance3D = null if whole_model or zebra_enabled or clay_enabled or active_tab == 3 else edit.target
     if selected_overlay_mesh != intended:
         if selected_overlay_mesh != null and is_instance_valid(selected_overlay_mesh):
             selected_overlay_mesh.material_overlay = selected_original_overlay
@@ -1328,6 +1383,7 @@ func _choose_mesh(index: int) -> void:
     _refresh_selection_highlight()
     _geometry_changed()
     _update_project_header()
+    _update_dimensions_fields()
     _notify("SELECTED %d/%d: %s • %d vertices" % [index + 1, mesh_nodes.size(), instance.name, edit.vertex_count()])
 
 func _cycle_part(direction: int) -> void:
